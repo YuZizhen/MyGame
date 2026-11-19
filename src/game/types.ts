@@ -1,4 +1,4 @@
-import type { ItemIcon, ItemRarity, LoadoutState } from "../domain/loadout";
+import type { ExtractionMode, ItemIcon, ItemRarity, LoadoutState } from "../domain/loadout";
 
 export type TileValue = 0 | 1;
 
@@ -71,6 +71,34 @@ export interface LootUiState {
   chestName?: string;
   chestItems: LootItem[];
   loadout?: LoadoutState;
+}
+
+export interface ExtractionPreview {
+  mode: ExtractionMode;
+  retainedItemCount: number;
+  droppedItemCount: number;
+  retainedValue: number;
+  droppedValue: number;
+  corruptionBefore: number;
+  corruptionAfter: number;
+}
+
+export interface ExtractionUiState {
+  open: boolean;
+  normal?: ExtractionPreview;
+  dropPack?: ExtractionPreview;
+}
+
+export interface ExtractionOutcomeUi extends ExtractionPreview {
+  persisted: boolean;
+  totalExtractedValue?: number;
+}
+
+export interface ProfileSummaryUi {
+  warehouseItemCount: number;
+  successfulExtractions: number;
+  totalExtractedValue: number;
+  status: "new" | "loaded" | "recovered" | "unavailable" | "unsupported";
 }
 
 export interface HudState {

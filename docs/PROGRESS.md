@@ -23,6 +23,11 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - [x] Prevented the inventory overlay from opening during an active boss encounter.
 - [x] Enforced red-cargo rejection at the rig domain boundary for every item size.
 - [x] Made extraction settlement return detached snapshots suitable for persistence.
+- [x] Added a two-option extraction screen with explicit retained/dropped previews.
+- [x] Added a versioned local profile, write-ahead recovery, corrupt-data backup, and warehouse ledger.
+- [x] Connected normal and drop-pack extraction to persistent run settlement.
+- [x] Made extraction commits idempotent and every run item instance ID unique.
+- [x] Displayed warehouse count, successful extractions, and cumulative value after reload.
 
 ## Active plan
 
@@ -33,7 +38,7 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - [x] Add a dedicated weapon slot with item-tag validation.
 - [x] Render rig and backpack side by side using the same pocket-view model.
 - [x] Implement normal extraction and drop-pack extraction as atomic domain transactions.
-- [ ] Add versioned local profile persistence and corruption recovery.
+- [x] Add versioned local profile persistence and corruption recovery.
 - [x] Fix the inventory/Boss delayed-damage race.
 
 ### P1 — Interaction and quality
@@ -68,10 +73,14 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 | 2026-11-20 | Container domain | `npm run check` | Passed; 8 tests and production build |
 | 2026-11-20 | Runtime loadout integration | `npm run check` | Passed; 13 tests and production build |
 | 2026-11-20 | Runtime loadout integration | Headless Edge at `?qa=loot` and `?qa=pickup` | Passed; side-by-side layout and backpack auto-placement verified |
+| 2026-11-20 | Extraction persistence | `npm run check` | Passed; 24 tests and production build |
+| 2026-11-20 | Extraction persistence | Headless Edge at `?qa=extract` and `?qa=extract-drop` | Passed; choice preview, drop settlement, and saved result verified |
+| 2026-11-20 | Profile reload | Isolated Edge profile, complete extraction, browser restart | Passed; HUD restored 2 warehouse items, 1 extraction, and 1951 total value |
 
 ## Commits
 
 - `5dbdbd2` — `feat: establish playable PvE extraction prototype`
 - `8776254` — `docs: define loadout container architecture`
 - `5de90de` — `feat: add tested multi-container loadout domain`
+- `c6804ef` — `feat: integrate rig and backpack loadout UI`
 

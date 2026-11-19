@@ -6,18 +6,33 @@ import {
   containerCapacity,
   containerUsedCells,
   createEmptyContainer,
+  listContainerItems,
+  settleExtraction,
+  type ExtractionMode,
+  type ExtractionResult,
   type ItemInstance,
   type LoadoutState,
 } from "../domain/loadout";
+import {
+  commitExtraction,
+  createDefaultProfile,
+  loadProfile,
+  type PlayerProfile,
+  type ProfileLoadStatus,
+} from "../profile/profileStore";
 import { generateDungeon } from "./DungeonGenerator";
 import { generateChestLoot } from "./LootSystem";
 import type {
   ChestType,
   DungeonData,
   DungeonRoom,
+  ExtractionOutcomeUi,
+  ExtractionPreview,
+  ExtractionUiState,
   HudState,
   LootItem,
   LootUiState,
+  ProfileSummaryUi,
   RuntimeMapState,
 } from "./types";
 
@@ -83,6 +98,7 @@ export class GameScene extends Phaser.Scene {
   private mobs: MobState[] = [];
   private chests: ChestState[] = [];
   private loadout!: LoadoutState;
+  private runId = "";
   private boss!: MobState;
   private fogGraphics!: Phaser.GameObjects.Graphics;
   private mapState!: RuntimeMapState;
@@ -113,9 +129,12 @@ export class GameScene extends Phaser.Scene {
   private searchStartedAt = 0;
   private nearbyChest?: ChestState;
   private lootPanelOpen = false;
+  private extractionPanelOpen = false;
   private activeLootChest?: ChestState;
   private qaLootChest?: ChestState;
   private qaTakeFirstLoot = false;
+  private qaOpenExtraction = false;
+  private qaExtractionMode?: ExtractionMode;
   private runState: "playing" | "won" | "lost" = "playing";
   private currentObjective = "探索灰烬地穴，寻找遗迹守门人";
 
@@ -173,13 +192,19 @@ export class GameScene extends Phaser.Scene {
     this.registry.set("mapState", this.mapState);
 
     const qaMode = import.meta.env.DEV ? new URLSearchParams(window.location.search).get("qa") : null;
-    if (qaMode === "boss" || qaMode === "exit") {
+    if (
+      qaMode === "boss" ||
+      qaMode === "exit" ||
+      qaMode === "extract" ||
+      qaMode === "extract-normal" ||
+      qaMode === "extract-drop"
+    ) {
       this.player.setPosition(
         (this.dungeon.bossRoom.centerX + 0.5) * TILE_SIZE,
         (this.dungeon.bossRoom.centerY + 0.5) * TILE_SIZE + 260,
       );
       this.cameras.main.centerOn(this.player.x, this.player.y);
-      if (qaMode === "exit") {
+      if (qaMode === "exit" || qaMode?.startsWith("extract")) {
         this.damageMob(this.boss, this.boss.maxHp);
       }
     }
@@ -199,6 +224,7 @@ export class GameScene extends Phaser.Scene {
     this.discoverRoom(this.dungeon.startRoom);
     this.updateFog(true);
 
+    this.refreshProfileSummary();
     if (!this.scene.isActive("HudScene")) {
       this.scene.launch("HudScene");
     }
@@ -206,17 +232,45 @@ export class GameScene extends Phaser.Scene {
     this.game.events.emit("hud:banner", "灰烬地穴\n找到并击败遗迹守门人");
     this.emitHudState();
 
+    if (qaMode?.startsWith("extract")) {
+      const bossChest = this.chests.find((chest) => chest.type === "boss");
+      if (bossChest?.loot[0]) {
+        this.handleLootTake({ chestId: bossChest.id, itemId: bossChest.loot[0].id });
+      }
+      this.qaOpenExtraction = true;
+      this.qaExtractionMode = qaMode === "extract-normal" ? "normal" : qaMode === "extract-drop" ? "drop_pack" : undefined;
+    }
+
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.input.off(Phaser.Input.Events.POINTER_DOWN, this.handlePointerAttack, this);
       this.game.events.off("loot:take", this.handleLootTake, this);
+      this.game.events.off("extraction:choose", this.handleExtractionChoice, this);
     });
     this.game.events.on("loot:take", this.handleLootTake, this);
+    this.game.events.on("extraction:choose", this.handleExtractionChoice, this);
   }
 
   update(time: number): void {
     if (this.runState !== "playing") {
       this.player.setVelocity(0, 0);
       if (Phaser.Input.Keyboard.JustDown(this.controls.restart)) this.scene.restart();
+      return;
+    }
+
+    if (this.qaOpenExtraction && this.scene.isActive("HudScene")) {
+      this.qaOpenExtraction = false;
+      this.openExtractionPanel();
+      if (this.qaExtractionMode) {
+        const mode = this.qaExtractionMode;
+        this.qaExtractionMode = undefined;
+        this.handleExtractionChoice(mode);
+      }
+    }
+
+    if (this.extractionPanelOpen) {
+      this.player.setVelocity(0, 0);
+      this.mobs.forEach((mob) => mob.sprite.setVelocity(0, 0));
+      if (Phaser.Input.Keyboard.JustDown(this.controls.close)) this.closeExtractionPanel();
       return;
     }
 
@@ -274,9 +328,10 @@ export class GameScene extends Phaser.Scene {
   private resetRuntimeState(): void {
     this.mobs = [];
     this.chests = [];
+    this.runId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     this.loadout = {
       weapon: {
-        id: "starter_sword",
+        id: `${this.runId}:starter_sword`,
         definitionId: "starter_sword",
         name: "铁誓长剑",
         width: 1,
@@ -314,9 +369,12 @@ export class GameScene extends Phaser.Scene {
     this.searchStartedAt = 0;
     this.nearbyChest = undefined;
     this.lootPanelOpen = false;
+    this.extractionPanelOpen = false;
     this.activeLootChest = undefined;
     this.qaLootChest = undefined;
     this.qaTakeFirstLoot = false;
+    this.qaOpenExtraction = false;
+    this.qaExtractionMode = undefined;
     this.runState = "playing";
     this.currentObjective = "探索灰烬地穴，寻找遗迹守门人";
   }
@@ -900,7 +958,7 @@ export class GameScene extends Phaser.Scene {
               : ["valuable"];
     const corruption = item.rarity === "red" ? 30 : item.rarity === "rare" ? 10 : item.rarity === "magic" ? 3 : 0;
     return {
-      id: item.id,
+      id: `${this.runId}:${item.id}`,
       definitionId: item.templateId,
       name: item.name,
       width: item.width,
@@ -1434,13 +1492,118 @@ export class GameScene extends Phaser.Scene {
     if (!this.exitPortal || !this.exitPortal.active) return false;
     const distance = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.exitPortal.x, this.exitPortal.y);
     if (distance > 110) return false;
+    this.openExtractionPanel();
+    return true;
+  }
+
+  private previewExtraction(extraction: ExtractionResult): ExtractionPreview {
+    const retainedItems = [
+      ...(extraction.retained.weapon ? [extraction.retained.weapon] : []),
+      ...listContainerItems(extraction.retained.rig),
+      ...(extraction.retained.backpack ? listContainerItems(extraction.retained.backpack) : []),
+    ];
+    const droppedItems = extraction.droppedBackpack
+      ? listContainerItems(extraction.droppedBackpack)
+      : [];
+    return {
+      mode: extraction.mode,
+      retainedItemCount: retainedItems.length,
+      droppedItemCount: droppedItems.length,
+      retainedValue: retainedItems.reduce((total, item) => total + item.value, 0),
+      droppedValue: droppedItems.reduce((total, item) => total + item.value, 0),
+      corruptionBefore: extraction.corruptionBefore,
+      corruptionAfter: extraction.corruptionAfter,
+    };
+  }
+
+  private openExtractionPanel(): void {
+    if (this.runState !== "playing" || this.extractionPanelOpen) return;
+    this.closeLootPanel();
+    this.extractionPanelOpen = true;
+    const state: ExtractionUiState = {
+      open: true,
+      normal: this.previewExtraction(settleExtraction(this.loadout, "normal")),
+      dropPack: this.previewExtraction(settleExtraction(this.loadout, "drop_pack")),
+    };
+    this.game.events.emit("extraction:state", state);
+  }
+
+  private closeExtractionPanel(): void {
+    if (!this.extractionPanelOpen) return;
+    this.extractionPanelOpen = false;
+    this.game.events.emit("extraction:state", { open: false } satisfies ExtractionUiState);
+  }
+
+  private handleExtractionChoice(mode: ExtractionMode): void {
+    if (!this.extractionPanelOpen || (mode !== "normal" && mode !== "drop_pack")) return;
+    const extraction = settleExtraction(this.loadout, mode);
+    const preview = this.previewExtraction(extraction);
+    let persisted = false;
+    let totalExtractedValue: number | undefined;
+    try {
+      const write = commitExtraction(
+        window.localStorage,
+        extraction,
+        Date.now(),
+        `${this.runId}:${mode}`,
+      );
+      if (write.ok) {
+        persisted = true;
+        totalExtractedValue = write.profile.totalExtractedValue;
+        this.publishProfileSummary(write.profile, write.loadStatus);
+      } else {
+        this.publishProfileFailure(write.error === "unsupported_version" ? "unsupported" : "unavailable");
+      }
+    } catch {
+      persisted = false;
+      this.publishProfileFailure("unavailable");
+    }
+
+    this.loadout = extraction.retained;
+    this.closeExtractionPanel();
     this.runState = "won";
     this.player.setVelocity(0, 0);
-    this.currentObjective = "撤离成功";
+    this.currentObjective = mode === "drop_pack" ? "丢包撤离成功" : "完整撤离成功";
     this.cameras.main.flash(700, 98, 212, 140, false);
     this.game.events.emit("audio:event", "run.victory");
+    this.game.events.emit("extraction:result", {
+      ...preview,
+      persisted,
+      totalExtractedValue,
+    } satisfies ExtractionOutcomeUi);
     this.emitHudState();
-    return true;
+  }
+
+  private refreshProfileSummary(): void {
+    try {
+      const loaded = loadProfile(window.localStorage);
+      this.publishProfileSummary(loaded.profile, loaded.status);
+    } catch {
+      this.publishProfileSummary(createDefaultProfile(), "unavailable");
+    }
+  }
+
+  private publishProfileSummary(profile: PlayerProfile, status: ProfileLoadStatus): void {
+    const summary: ProfileSummaryUi = {
+      warehouseItemCount: profile.warehouse.length,
+      successfulExtractions: profile.successfulExtractions,
+      totalExtractedValue: profile.totalExtractedValue,
+      status,
+    };
+    this.registry.set("profileSummary", summary);
+    this.game.events.emit("profile:state", summary);
+  }
+
+  private publishProfileFailure(status: "unavailable" | "unsupported"): void {
+    const existing = this.registry.get("profileSummary") as ProfileSummaryUi | undefined;
+    const summary: ProfileSummaryUi = {
+      warehouseItemCount: existing?.warehouseItemCount ?? 0,
+      successfulExtractions: existing?.successfulExtractions ?? 0,
+      totalExtractedValue: existing?.totalExtractedValue ?? 0,
+      status,
+    };
+    this.registry.set("profileSummary", summary);
+    this.game.events.emit("profile:state", summary);
   }
 
   private handleDefeat(): void {

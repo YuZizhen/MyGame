@@ -6,7 +6,17 @@ import {
   type ContainerState,
   type ItemInstance,
 } from "../domain/loadout";
-import type { HudState, LootItem, LootRarity, LootUiState, RuntimeMapState } from "./types";
+import type {
+  ExtractionOutcomeUi,
+  ExtractionPreview,
+  ExtractionUiState,
+  HudState,
+  LootItem,
+  LootRarity,
+  LootUiState,
+  ProfileSummaryUi,
+  RuntimeMapState,
+} from "./types";
 
 const DEFAULT_HUD: HudState = {
   hp: 100,
@@ -25,12 +35,20 @@ const DEFAULT_HUD: HudState = {
   state: "playing",
 };
 
+const DEFAULT_PROFILE_SUMMARY: ProfileSummaryUi = {
+  warehouseItemCount: 0,
+  successfulExtractions: 0,
+  totalExtractedValue: 0,
+  status: "new",
+};
+
 export class HudScene extends Phaser.Scene {
   private hudState: HudState = { ...DEFAULT_HUD };
   private statusGraphics!: Phaser.GameObjects.Graphics;
   private minimapGraphics!: Phaser.GameObjects.Graphics;
   private objectiveText!: Phaser.GameObjects.Text;
   private statusText!: Phaser.GameObjects.Text;
+  private profileText!: Phaser.GameObjects.Text;
   private bossNameText!: Phaser.GameObjects.Text;
   private bannerText!: Phaser.GameObjects.Text;
   private resultBackdrop!: Phaser.GameObjects.Rectangle;
@@ -40,7 +58,11 @@ export class HudScene extends Phaser.Scene {
   private lootTitle!: Phaser.GameObjects.Text;
   private lootHint!: Phaser.GameObjects.Text;
   private lootObjects: Phaser.GameObjects.GameObject[] = [];
+  private extractionGraphics!: Phaser.GameObjects.Graphics;
+  private extractionObjects: Phaser.GameObjects.GameObject[] = [];
+  private lastExtractionOutcome?: ExtractionOutcomeUi;
   private lastMapDraw = 0;
+  private profileSummary: ProfileSummaryUi = { ...DEFAULT_PROFILE_SUMMARY };
 
   constructor() {
     super("HudScene");
@@ -50,6 +72,7 @@ export class HudScene extends Phaser.Scene {
     this.statusGraphics = this.add.graphics();
     this.minimapGraphics = this.add.graphics();
     this.lootGraphics = this.add.graphics().setDepth(100);
+    this.extractionGraphics = this.add.graphics().setDepth(120);
 
     this.objectiveText = this.add.text(34, 42, "", {
       fontFamily: "Microsoft YaHei, sans-serif",
@@ -63,6 +86,14 @@ export class HudScene extends Phaser.Scene {
       fontFamily: "Microsoft YaHei, sans-serif",
       fontSize: "16px",
       color: "#c8d0d2",
+      stroke: "#080b0f",
+      strokeThickness: 4,
+    });
+
+    this.profileText = this.add.text(34, 149, "", {
+      fontFamily: "Microsoft YaHei, sans-serif",
+      fontSize: "14px",
+      color: "#9facb0",
       stroke: "#080b0f",
       strokeThickness: 4,
     });
@@ -157,8 +188,14 @@ export class HudScene extends Phaser.Scene {
     this.game.events.on("hud:banner", this.handleBanner, this);
     this.game.events.on("hud:reset", this.handleReset, this);
     this.game.events.on("loot:state", this.handleLootState, this);
+    this.game.events.on("extraction:state", this.handleExtractionState, this);
+    this.game.events.on("extraction:result", this.handleExtractionResult, this);
+    this.game.events.on("profile:state", this.handleProfileState, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.removeListeners, this);
 
+    this.profileSummary =
+      (this.registry.get("profileSummary") as ProfileSummaryUi | undefined) ??
+      { ...DEFAULT_PROFILE_SUMMARY };
     this.renderStatus();
   }
 
@@ -176,11 +213,17 @@ export class HudScene extends Phaser.Scene {
 
     if (previousState !== state.state && state.state !== "playing") {
       const won = state.state === "won";
+      const outcome = this.lastExtractionOutcome;
+      const successText = outcome
+        ? outcome.mode === "drop_pack"
+          ? `丢包撤离成功\n保留 ${outcome.retainedItemCount} 件 · 丢弃 ${outcome.droppedItemCount} 件\n带出价值 ${outcome.retainedValue} · 腐化 ${outcome.corruptionBefore} → ${outcome.corruptionAfter}${outcome.persisted ? `\n仓库累计价值 ${outcome.totalExtractedValue ?? outcome.retainedValue}` : "\n本地存档不可用，本次结果未保存"}`
+          : `完整撤离成功\n带出 ${outcome.retainedItemCount} 件 · 价值 ${outcome.retainedValue}\n腐化 ${outcome.corruptionAfter}${outcome.persisted ? `\n仓库累计价值 ${outcome.totalExtractedValue ?? outcome.retainedValue}` : "\n本地存档不可用，本次结果未保存"}`
+        : "撤离成功\n战利品已安全带出";
       this.resultBackdrop.setVisible(true);
       this.resultText
         .setText(
           won
-            ? "撤离成功\n守门核心已安全带出\n\n按 R 再次进入地穴"
+            ? `${successText}\n\n按 R 再次进入地穴`
             : "你倒在了灰烬地穴\n本次探索结束\n\n按 R 重新挑战",
         )
         .setColor(won ? "#f4d69b" : "#d88479")
@@ -206,11 +249,134 @@ export class HudScene extends Phaser.Scene {
     this.resultBackdrop.setVisible(false);
     this.resultText.setVisible(false);
     this.bannerText.setAlpha(0);
+    this.lastExtractionOutcome = undefined;
     this.handleLootState({
       open: false,
       chestItems: [],
     });
+    this.handleExtractionState({ open: false });
     this.renderStatus();
+  }
+
+  private handleExtractionResult(outcome: ExtractionOutcomeUi): void {
+    this.lastExtractionOutcome = outcome;
+  }
+
+  private handleProfileState(summary: ProfileSummaryUi): void {
+    this.profileSummary = { ...summary };
+    this.renderStatus();
+  }
+
+  private handleExtractionState(state: ExtractionUiState): void {
+    this.clearExtractionObjects();
+    this.extractionGraphics.clear();
+    if (!state.open || !state.normal || !state.dropPack) return;
+
+    this.extractionGraphics.fillStyle(0x020405, 0.92).fillRect(0, 0, 1280, 720);
+    this.extractionGraphics.fillStyle(0x0b1116, 1).fillRoundedRect(112, 72, 1056, 560, 22);
+    this.extractionGraphics.lineStyle(2, 0x62d48c, 0.7).strokeRoundedRect(112, 72, 1056, 560, 22);
+    const title = this.add
+      .text(640, 112, "选择撤离方式", {
+        fontFamily: "Microsoft YaHei, sans-serif",
+        fontSize: "30px",
+        fontStyle: "bold",
+        color: "#f0e4d2",
+      })
+      .setOrigin(0.5)
+      .setDepth(123);
+    const subtitle = this.add
+      .text(640, 151, "胸挂与背包并列；区别只发生在本次撤离结算", {
+        fontFamily: "Microsoft YaHei, sans-serif",
+        fontSize: "16px",
+        color: "#9facb0",
+      })
+      .setOrigin(0.5)
+      .setDepth(123);
+    this.extractionObjects.push(title, subtitle);
+    this.createExtractionCard(state.normal, 150, 190, 450, 340);
+    this.createExtractionCard(state.dropPack, 680, 190, 450, 340);
+    const hint = this.add
+      .text(640, 582, "点击方案确认撤离 · Esc 返回继续整理", {
+        fontFamily: "Microsoft YaHei, sans-serif",
+        fontSize: "16px",
+        color: "#aeb9bc",
+      })
+      .setOrigin(0.5)
+      .setDepth(123);
+    this.extractionObjects.push(hint);
+  }
+
+  private createExtractionCard(
+    preview: ExtractionPreview,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+  ): void {
+    const dropPack = preview.mode === "drop_pack";
+    const accent = dropPack ? 0xd1844b : 0x62d48c;
+    const card = this.add
+      .rectangle(x, y, width, height, 0x121b20, 1)
+      .setOrigin(0)
+      .setStrokeStyle(2, accent, 0.88)
+      .setDepth(122)
+      .setInteractive({ useHandCursor: true });
+    card.on(Phaser.Input.Events.POINTER_OVER, () => card.setFillStyle(0x1b292f, 1));
+    card.on(Phaser.Input.Events.POINTER_OUT, () => card.setFillStyle(0x121b20, 1));
+    card.on(Phaser.Input.Events.POINTER_DOWN, () => {
+      this.game.events.emit("extraction:choose", preview.mode);
+    });
+    const heading = this.add
+      .text(x + 28, y + 28, dropPack ? "丢包撤离" : "完整撤离", {
+        fontFamily: "Microsoft YaHei, sans-serif",
+        fontSize: "27px",
+        fontStyle: "bold",
+        color: dropPack ? "#e9aa72" : "#82ddb0",
+      })
+      .setDepth(123);
+    const rule = this.add
+      .text(
+        x + 28,
+        y + 82,
+        dropPack
+          ? "保留武器与胸挂\n丢弃背包及背包内全部物品"
+          : "保留武器、胸挂与背包\n带出所有容器内的物品",
+        {
+          fontFamily: "Microsoft YaHei, sans-serif",
+          fontSize: "18px",
+          color: "#d6ddde",
+          lineSpacing: 9,
+        },
+      )
+      .setDepth(123);
+    const summary = this.add
+      .text(
+        x + 28,
+        y + 180,
+        `保留 ${preview.retainedItemCount} 件 · 价值 ${preview.retainedValue}\n丢弃 ${preview.droppedItemCount} 件 · 价值 ${preview.droppedValue}\n腐化 ${preview.corruptionBefore} → ${preview.corruptionAfter}`,
+        {
+          fontFamily: "Microsoft YaHei, sans-serif",
+          fontSize: "17px",
+          color: "#aeb9bc",
+          lineSpacing: 10,
+        },
+      )
+      .setDepth(123);
+    const action = this.add
+      .text(x + width - 28, y + height - 28, "确认撤离  ›", {
+        fontFamily: "Microsoft YaHei, sans-serif",
+        fontSize: "18px",
+        fontStyle: "bold",
+        color: dropPack ? "#e9aa72" : "#82ddb0",
+      })
+      .setOrigin(1, 1)
+      .setDepth(123);
+    this.extractionObjects.push(card, heading, rule, summary, action);
+  }
+
+  private clearExtractionObjects(): void {
+    this.extractionObjects.forEach((object) => object.destroy());
+    this.extractionObjects = [];
   }
 
   private handleLootState(state: LootUiState): void {
@@ -499,8 +665,8 @@ export class HudScene extends Phaser.Scene {
     const healthRatio = Phaser.Math.Clamp(state.hp / state.maxHp, 0, 1);
 
     this.statusGraphics.clear();
-    this.statusGraphics.fillStyle(0x080b0f, 0.82).fillRoundedRect(24, 22, 390, 126, 12);
-    this.statusGraphics.lineStyle(1, 0x465057, 0.8).strokeRoundedRect(24, 22, 390, 126, 12);
+    this.statusGraphics.fillStyle(0x080b0f, 0.82).fillRoundedRect(24, 22, 390, 160, 12);
+    this.statusGraphics.lineStyle(1, 0x465057, 0.8).strokeRoundedRect(24, 22, 390, 160, 12);
     this.statusGraphics.fillStyle(0x11171c, 1).fillRoundedRect(34, 72, 278, 18, 5);
     this.statusGraphics.fillStyle(healthRatio > 0.3 ? 0xc84f46 : 0xe38b36, 1);
     this.statusGraphics.fillRoundedRect(36, 74, 274 * healthRatio, 14, 4);
@@ -510,6 +676,23 @@ export class HudScene extends Phaser.Scene {
     this.statusText.setText(
       `生命 ${Math.ceil(state.hp)} / ${state.maxHp}   ·   行囊 ${state.inventoryUsed}/${state.inventoryCapacity}\n探索 ${state.roomsExplored}/${state.totalRooms}   ·   药剂 ${state.potions}   ·   翻滚 ${state.rollReady ? "就绪" : "冷却"}`,
     );
+    const profileStatus =
+      this.profileSummary.status === "recovered"
+        ? " · 档案已恢复"
+        : this.profileSummary.status === "unavailable"
+          ? " · 存档不可用"
+          : this.profileSummary.status === "unsupported"
+            ? " · 需要新版游戏"
+            : "";
+    this.profileText
+      .setText(
+        `仓库 ${this.profileSummary.warehouseItemCount} 件 · 成功撤离 ${this.profileSummary.successfulExtractions} · 累计价值 ${this.profileSummary.totalExtractedValue}${profileStatus}`,
+      )
+      .setColor(
+        this.profileSummary.status === "unavailable" || this.profileSummary.status === "unsupported"
+          ? "#d88479"
+          : "#9facb0",
+      );
     this.interactionText.setText(state.interactionPrompt).setVisible(state.interactionPrompt.length > 0);
 
     if (state.bossActive) {
@@ -598,6 +781,9 @@ export class HudScene extends Phaser.Scene {
     this.game.events.off("hud:banner", this.handleBanner, this);
     this.game.events.off("hud:reset", this.handleReset, this);
     this.game.events.off("loot:state", this.handleLootState, this);
+    this.game.events.off("extraction:state", this.handleExtractionState, this);
+    this.game.events.off("extraction:result", this.handleExtractionResult, this);
+    this.game.events.off("profile:state", this.handleProfileState, this);
   }
 }
 
