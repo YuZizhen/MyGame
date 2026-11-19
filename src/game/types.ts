@@ -27,6 +27,7 @@ export interface DungeonData {
 }
 
 export interface RuntimeMapState {
+  revision: number;
   width: number;
   height: number;
   tiles: TileValue[];

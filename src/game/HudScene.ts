@@ -62,6 +62,7 @@ export class HudScene extends Phaser.Scene {
   private extractionObjects: Phaser.GameObjects.GameObject[] = [];
   private lastExtractionOutcome?: ExtractionOutcomeUi;
   private lastMapDraw = 0;
+  private lastMapRevision = -1;
   private profileSummary: ProfileSummaryUi = { ...DEFAULT_PROFILE_SUMMARY };
 
   constructor() {
@@ -250,6 +251,7 @@ export class HudScene extends Phaser.Scene {
     this.resultText.setVisible(false);
     this.bannerText.setAlpha(0);
     this.lastExtractionOutcome = undefined;
+    this.lastMapRevision = -1;
     this.handleLootState({
       open: false,
       chestItems: [],
@@ -709,6 +711,8 @@ export class HudScene extends Phaser.Scene {
   private drawMinimap(): void {
     const mapState = this.registry.get("mapState") as RuntimeMapState | undefined;
     if (!mapState) return;
+    if (mapState.revision === this.lastMapRevision) return;
+    this.lastMapRevision = mapState.revision;
 
     const panelX = 994;
     const panelY = 24;

@@ -91,6 +91,7 @@ export class GameScene extends Phaser.Scene {
   private worldWidth = 0;
   private worldHeight = 0;
   private wallGroup!: Phaser.Physics.Arcade.StaticGroup;
+  private chestBlockerGroup!: Phaser.Physics.Arcade.StaticGroup;
   private enemyGroup!: Phaser.Physics.Arcade.Group;
   private player!: Phaser.Physics.Arcade.Sprite;
   private playerShadow!: Phaser.GameObjects.Ellipse;
@@ -113,6 +114,9 @@ export class GameScene extends Phaser.Scene {
   private invulnerableUntil = 0;
   private controlLockedUntil = 0;
   private lastFogUpdate = 0;
+  private lastFogTileX = Number.NaN;
+  private lastFogTileY = Number.NaN;
+  private lastFogRadiusStep = Number.NaN;
   private lastHudUpdate = 0;
   private visionRadius = DEFAULT_VISION_RADIUS;
   private bossEncounterActive = false;
@@ -165,11 +169,15 @@ export class GameScene extends Phaser.Scene {
     this.physics.add.collider(this.player, this.wallGroup);
     this.physics.add.collider(this.enemyGroup, this.wallGroup);
     this.physics.add.collider(this.player, this.enemyGroup);
+    this.physics.add.collider(this.player, this.chestBlockerGroup);
+    this.physics.add.collider(this.enemyGroup, this.chestBlockerGroup);
+    this.physics.add.collider(this.enemyGroup, this.enemyGroup);
 
     this.cameras.main.setZoom(1);
     this.cameras.main.startFollow(this.player, true, 0.12, 0.12);
 
     this.mapState = {
+      revision: 0,
       width: this.dungeon.width,
       height: this.dungeon.height,
       tiles: this.dungeon.tiles,
@@ -355,6 +363,9 @@ export class GameScene extends Phaser.Scene {
     this.invulnerableUntil = 0;
     this.controlLockedUntil = 0;
     this.lastFogUpdate = 0;
+    this.lastFogTileX = Number.NaN;
+    this.lastFogTileY = Number.NaN;
+    this.lastFogRadiusStep = Number.NaN;
     this.lastHudUpdate = 0;
     this.visionRadius = DEFAULT_VISION_RADIUS;
     this.bossEncounterActive = false;
@@ -666,6 +677,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private createChests(): void {
+    this.chestBlockerGroup = this.physics.add.staticGroup();
     const candidateRooms = this.dungeon.rooms.filter((room) => !room.isStart && !room.isBoss);
     const selected = candidateRooms
       .map((room) => ({ room, score: (room.id * 47 + room.gridX * 19 + room.gridY * 31) % 101 }))
@@ -683,6 +695,11 @@ export class GameScene extends Phaser.Scene {
   }
 
   private createChest(id: string, type: ChestType, roomId: number, x: number, y: number): ChestState {
+    this.chestBlockerGroup
+      .create(x, y + 10, "solid")
+      .setDisplaySize(86, 52)
+      .setAlpha(0)
+      .refreshBody();
     const color = type === "hidden" ? 0x5c3d68 : type === "reliquary" || type === "boss" ? 0x513c28 : 0x4a2f24;
     const metal = type === "hidden" ? 0xa56de2 : type === "boss" ? 0xe9a646 : 0x7e8a8d;
     const glow = this.add
@@ -835,7 +852,10 @@ export class GameScene extends Phaser.Scene {
     this.tweens.add({ targets: chest.glow, alpha: 0.5, scale: 0.92, duration: 300, yoyo: true });
     this.spawnChestSparkles(chest);
     const marker = this.mapState.chests.find((entry) => entry.id === chest.id);
-    if (marker) marker.opened = true;
+    if (marker) {
+      marker.opened = true;
+      this.markMapDirty();
+    }
     this.game.events.emit("audio:event", "container.open");
     this.game.events.emit("hud:banner", `${this.chestName(chest.type)}已开启`);
     this.searchChest = undefined;
@@ -1359,8 +1379,11 @@ export class GameScene extends Phaser.Scene {
   private checkRoomDiscovery(): void {
     const tileX = Math.floor(this.player.x / TILE_SIZE);
     const tileY = Math.floor(this.player.y / TILE_SIZE);
-    this.mapState.playerTileX = tileX;
-    this.mapState.playerTileY = tileY;
+    if (this.mapState.playerTileX !== tileX || this.mapState.playerTileY !== tileY) {
+      this.mapState.playerTileX = tileX;
+      this.mapState.playerTileY = tileY;
+      this.markMapDirty();
+    }
     const room = this.dungeon.rooms.find(
       (candidate) =>
         tileX >= candidate.x &&
@@ -1388,7 +1411,12 @@ export class GameScene extends Phaser.Scene {
         const chest = this.chests.find((entry) => entry.id === marker.id);
         if (chest?.roomId === room.id) marker.discovered = true;
       }
+      this.markMapDirty();
     }
+  }
+
+  private markMapDirty(): void {
+    if (this.mapState) this.mapState.revision += 1;
   }
 
   private checkBossTrigger(): void {
@@ -1409,6 +1437,7 @@ export class GameScene extends Phaser.Scene {
     this.controlLockedUntil = this.time.now + 350;
     this.currentObjective = "击败遗迹守门人";
     this.mapState.bossActive = true;
+    this.markMapDirty();
     this.cameras.main.stopFollow();
     this.tweens.add({ targets: this.cameras.main, zoom: 0.74, duration: 900, ease: "Sine.easeInOut" });
     this.tweens.add({ targets: this, visionRadius: BOSS_VISION_RADIUS, duration: 900, ease: "Sine.easeInOut" });
@@ -1480,6 +1509,7 @@ export class GameScene extends Phaser.Scene {
       opened: false,
       type: "boss",
     });
+    this.markMapDirty();
 
     this.time.delayedCall(1500, () => {
       this.tweens.add({ targets: this.cameras.main, zoom: 1, duration: 1000, ease: "Sine.easeInOut" });
@@ -1620,15 +1650,33 @@ export class GameScene extends Phaser.Scene {
     const playerTileX = Math.floor(this.player.x / TILE_SIZE);
     const playerTileY = Math.floor(this.player.y / TILE_SIZE);
     const radius = this.visionRadius;
+    const radiusStep = Math.round(radius * 4) / 4;
+    if (
+      !force &&
+      playerTileX === this.lastFogTileX &&
+      playerTileY === this.lastFogTileY &&
+      radiusStep === this.lastFogRadiusStep
+    ) {
+      return;
+    }
+    this.lastFogTileX = playerTileX;
+    this.lastFogTileY = playerTileY;
+    this.lastFogRadiusStep = radiusStep;
     const radiusSquared = radius * radius;
+    let exploredChanged = false;
 
     for (let y = Math.max(0, Math.floor(playerTileY - radius - 1)); y <= Math.min(this.dungeon.height - 1, Math.ceil(playerTileY + radius + 1)); y += 1) {
       for (let x = Math.max(0, Math.floor(playerTileX - radius - 1)); x <= Math.min(this.dungeon.width - 1, Math.ceil(playerTileX + radius + 1)); x += 1) {
         const dx = x + 0.5 - playerTileX;
         const dy = y + 0.5 - playerTileY;
-        if (dx * dx + dy * dy <= radiusSquared) this.mapState.explored[y * this.dungeon.width + x] = true;
+        const index = y * this.dungeon.width + x;
+        if (dx * dx + dy * dy <= radiusSquared && !this.mapState.explored[index]) {
+          this.mapState.explored[index] = true;
+          exploredChanged = true;
+        }
       }
     }
+    if (exploredChanged) this.markMapDirty();
 
     this.fogGraphics.clear();
     for (let y = 0; y < this.dungeon.height; y += 1) {
