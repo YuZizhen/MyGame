@@ -1,3 +1,5 @@
+import type { ItemIcon, ItemRarity, LoadoutState } from "../domain/loadout";
+
 export type TileValue = 0 | 1;
 
 export interface DungeonRoom {
@@ -41,7 +43,7 @@ export interface RuntimeMapState {
 }
 
 export type ChestType = "supply" | "reliquary" | "hidden" | "boss";
-export type LootRarity = "common" | "magic" | "rare";
+export type LootRarity = ItemRarity;
 
 export interface LootItem {
   id: string;
@@ -51,12 +53,7 @@ export interface LootItem {
   height: number;
   rarity: LootRarity;
   value: number;
-  icon: "gem" | "pouch" | "ring" | "blade" | "scroll" | "helm" | "axe" | "armor" | "relic";
-}
-
-export interface InventoryItem extends LootItem {
-  x: number;
-  y: number;
+  icon: ItemIcon;
 }
 
 export interface MapChestMarker {
@@ -73,9 +70,7 @@ export interface LootUiState {
   chestId?: string;
   chestName?: string;
   chestItems: LootItem[];
-  inventoryItems: InventoryItem[];
-  inventoryColumns: number;
-  inventoryRows: number;
+  loadout?: LoadoutState;
 }
 
 export interface HudState {

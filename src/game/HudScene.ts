@@ -1,4 +1,11 @@
 import Phaser from "phaser";
+import {
+  containerCapacity,
+  containerUsedCells,
+  rotatedSize,
+  type ContainerState,
+  type ItemInstance,
+} from "../domain/loadout";
 import type { HudState, LootItem, LootRarity, LootUiState, RuntimeMapState } from "./types";
 
 const DEFAULT_HUD: HudState = {
@@ -14,7 +21,7 @@ const DEFAULT_HUD: HudState = {
   rollReady: true,
   interactionPrompt: "",
   inventoryUsed: 0,
-  inventoryCapacity: 30,
+  inventoryCapacity: 42,
   state: "playing",
 };
 
@@ -120,7 +127,7 @@ export class HudScene extends Phaser.Scene {
       .setVisible(false);
 
     this.lootHint = this.add
-      .text(640, 650, "点击箱内物品自动放入背包 · Tab / Esc 关闭", {
+      .text(640, 628, "点击箱内物品自动放入背包 · Tab / Esc 关闭", {
         fontFamily: "Microsoft YaHei, sans-serif",
         fontSize: "16px",
         color: "#aeb9bc",
@@ -202,9 +209,6 @@ export class HudScene extends Phaser.Scene {
     this.handleLootState({
       open: false,
       chestItems: [],
-      inventoryItems: [],
-      inventoryColumns: 6,
-      inventoryRows: 5,
     });
     this.renderStatus();
   }
@@ -214,29 +218,29 @@ export class HudScene extends Phaser.Scene {
     this.lootGraphics.clear();
     this.lootTitle.setVisible(false);
     this.lootHint.setVisible(false);
-    if (!state.open) return;
+    if (!state.open || !state.loadout) return;
 
     this.lootGraphics.setVisible(true);
     this.lootGraphics.fillStyle(0x030506, 0.88).fillRect(0, 0, 1280, 720);
     this.lootGraphics.fillStyle(0x0b1116, 0.97).fillRoundedRect(86, 58, 1108, 600, 20);
     this.lootGraphics.lineStyle(2, 0x566167, 0.72).strokeRoundedRect(86, 58, 1108, 600, 20);
-    this.lootGraphics.fillStyle(0x111920, 1).fillRoundedRect(118, 136, 440, 446, 14);
-    this.lootGraphics.fillStyle(0x111920, 1).fillRoundedRect(590, 136, 572, 446, 14);
-    this.lootGraphics.lineStyle(1, 0x344148, 0.9).strokeRoundedRect(118, 136, 440, 446, 14);
-    this.lootGraphics.strokeRoundedRect(590, 136, 572, 446, 14);
+    this.lootGraphics.fillStyle(0x111920, 1).fillRoundedRect(110, 130, 320, 458, 14);
+    this.lootGraphics.fillStyle(0x111920, 1).fillRoundedRect(452, 130, 718, 458, 14);
+    this.lootGraphics.lineStyle(1, 0x344148, 0.9).strokeRoundedRect(110, 130, 320, 458, 14);
+    this.lootGraphics.strokeRoundedRect(452, 130, 718, 458, 14);
 
     this.lootTitle.setText(state.chestId ? `${state.chestName ?? "宝箱"} · 搜刮` : "行囊整理").setVisible(true);
     this.lootHint.setVisible(true);
 
     const leftHeading = this.add
-      .text(142, 154, state.chestId ? `箱内物品  ${state.chestItems.length}` : "当前没有打开的容器", {
+      .text(132, 150, state.chestId ? `箱内物品  ${state.chestItems.length}` : "当前没有打开的容器", {
         fontFamily: "Microsoft YaHei, sans-serif",
         fontSize: "18px",
         color: "#d8dedf",
       })
       .setDepth(102);
     const rightHeading = this.add
-      .text(614, 154, `背包  ${state.inventoryColumns}×${state.inventoryRows}`, {
+      .text(474, 150, "出战负载", {
         fontFamily: "Microsoft YaHei, sans-serif",
         fontSize: "18px",
         color: "#d8dedf",
@@ -245,20 +249,18 @@ export class HudScene extends Phaser.Scene {
     this.lootObjects.push(leftHeading, rightHeading);
 
     state.chestItems.forEach((item, index) => {
-      const column = index % 2;
-      const row = Math.floor(index / 2);
-      const x = 142 + column * 202;
-      const y = 198 + row * 106;
+      const x = 132;
+      const y = 190 + index * 76;
       this.createChestItemCard(item, state.chestId!, x, y);
     });
 
-    this.drawInventoryGrid(state);
+    this.drawLoadout(state.loadout);
   }
 
   private createChestItemCard(item: LootItem, chestId: string, x: number, y: number): void {
     const color = this.rarityColor(item.rarity);
     const card = this.add
-      .rectangle(x, y, 184, 88, 0x172027, 1)
+      .rectangle(x, y, 276, 64, 0x172027, 1)
       .setOrigin(0)
       .setStrokeStyle(2, color, 0.9)
       .setDepth(102)
@@ -269,9 +271,9 @@ export class HudScene extends Phaser.Scene {
       this.game.events.emit("loot:take", { chestId, itemId: item.id });
     });
     const icon = this.add.graphics().setDepth(103);
-    this.drawLootIcon(icon, item, x + 35, y + 42, 0.7);
+    this.drawLootIcon(icon, item, x + 32, y + 32, 0.58);
     const name = this.add
-      .text(x + 70, y + 14, item.name, {
+      .text(x + 62, y + 9, item.name, {
         fontFamily: "Microsoft YaHei, sans-serif",
         fontSize: "16px",
         fontStyle: "bold",
@@ -279,7 +281,7 @@ export class HudScene extends Phaser.Scene {
       })
       .setDepth(103);
     const detail = this.add
-      .text(x + 70, y + 42, `${item.width}×${item.height} · 价值 ${item.value}`, {
+      .text(x + 62, y + 35, `${item.width}×${item.height} · 价值 ${item.value}`, {
         fontFamily: "Microsoft YaHei, sans-serif",
         fontSize: "14px",
         color: this.rarityTextColor(item.rarity),
@@ -288,54 +290,109 @@ export class HudScene extends Phaser.Scene {
     this.lootObjects.push(card, icon, name, detail);
   }
 
-  private drawInventoryGrid(state: LootUiState): void {
-    const cell = 62;
-    const originX = 614;
-    const originY = 198;
-    for (let y = 0; y < state.inventoryRows; y += 1) {
-      for (let x = 0; x < state.inventoryColumns; x += 1) {
-        this.lootGraphics.fillStyle(0x0b1115, 1).fillRoundedRect(originX + x * cell, originY + y * cell, cell - 4, cell - 4, 6);
-        this.lootGraphics.lineStyle(1, 0x2b373d, 0.85).strokeRoundedRect(originX + x * cell, originY + y * cell, cell - 4, cell - 4, 6);
-      }
+  private drawLoadout(loadout: NonNullable<LootUiState["loadout"]>): void {
+    this.lootGraphics.fillStyle(0x0b1115, 1).fillRoundedRect(474, 184, 672, 66, 10);
+    this.lootGraphics.lineStyle(1, 0x344148, 0.9).strokeRoundedRect(474, 184, 672, 66, 10);
+    const weaponLabel = this.add
+      .text(494, 196, "武器位", {
+        fontFamily: "Microsoft YaHei, sans-serif",
+        fontSize: "14px",
+        color: "#9facb0",
+      })
+      .setDepth(103);
+    const weaponName = this.add
+      .text(574, 194, loadout.weapon?.name ?? "未装备", {
+        fontFamily: "Microsoft YaHei, sans-serif",
+        fontSize: "18px",
+        fontStyle: "bold",
+        color: "#e7ecec",
+      })
+      .setDepth(103);
+    this.lootObjects.push(weaponLabel, weaponName);
+    if (loadout.weapon) {
+      const weaponIcon = this.add.graphics().setDepth(103);
+      this.drawLootIcon(weaponIcon, loadout.weapon, 548, 218, 0.5);
+      this.lootObjects.push(weaponIcon);
     }
 
-    for (const item of state.inventoryItems) {
-      const x = originX + item.x * cell;
-      const y = originY + item.y * cell;
-      const width = item.width * cell - 4;
-      const height = item.height * cell - 4;
-      const color = this.rarityColor(item.rarity);
-      this.lootGraphics.fillStyle(0x182229, 0.98).fillRoundedRect(x, y, width, height, 8);
-      this.lootGraphics.lineStyle(3, color, 0.95).strokeRoundedRect(x, y, width, height, 8);
-      const icon = this.add.graphics().setDepth(103);
-      this.drawLootIcon(icon, item, x + width / 2, y + height / 2 - 6, Math.min(1.15, Math.min(width, height) / 62));
-      this.lootObjects.push(icon);
-      if (item.width * item.height > 1) {
-        const label = this.add
-          .text(x + width / 2, y + height - 17, item.name, {
-            fontFamily: "Microsoft YaHei, sans-serif",
-            fontSize: "14px",
-            color: "#e7ecec",
-            align: "center",
-          })
-          .setOrigin(0.5)
-          .setDepth(103);
-        this.lootObjects.push(label);
+    this.drawContainer(loadout.rig, 474, 282, 302, 280, "胸挂");
+    if (loadout.backpack) {
+      this.drawContainer(loadout.backpack, 800, 282, 346, 280, "背包");
+    }
+  }
+
+  private drawContainer(
+    container: ContainerState,
+    originX: number,
+    originY: number,
+    maxWidth: number,
+    maxHeight: number,
+    roleLabel: string,
+  ): void {
+    const bounds = container.pockets.reduce(
+      (current, pocket) => ({
+        width: Math.max(current.width, pocket.definition.offsetX + pocket.definition.width),
+        height: Math.max(current.height, pocket.definition.offsetY + pocket.definition.height),
+      }),
+      { width: 1, height: 1 },
+    );
+    const heading = this.add
+      .text(originX, originY - 24, `${roleLabel} · ${container.name}`, {
+        fontFamily: "Microsoft YaHei, sans-serif",
+        fontSize: "16px",
+        color: "#d8dedf",
+      })
+      .setDepth(103);
+    const usage = this.add
+      .text(originX + maxWidth, originY - 24, `${containerUsedCells(container)}/${containerCapacity(container)}`, {
+        fontFamily: "Microsoft YaHei, sans-serif",
+        fontSize: "14px",
+        color: "#9facb0",
+      })
+      .setOrigin(1, 0)
+      .setDepth(103);
+    this.lootObjects.push(heading, usage);
+
+    const cell = Math.min(46, maxWidth / bounds.width, maxHeight / bounds.height);
+    for (const pocket of container.pockets) {
+      const pocketX = originX + pocket.definition.offsetX * cell;
+      const pocketY = originY + pocket.definition.offsetY * cell;
+      for (let y = 0; y < pocket.definition.height; y += 1) {
+        for (let x = 0; x < pocket.definition.width; x += 1) {
+          if (pocket.definition.mask && pocket.definition.mask[y]?.[x] !== true) continue;
+          this.lootGraphics.fillStyle(pocket.definition.quickAccess ? 0x131d21 : 0x0b1115, 1);
+          this.lootGraphics.fillRoundedRect(pocketX + x * cell, pocketY + y * cell, cell - 4, cell - 4, 5);
+          this.lootGraphics.lineStyle(1, pocket.definition.quickAccess ? 0x8a653c : 0x2b373d, 0.85);
+          this.lootGraphics.strokeRoundedRect(pocketX + x * cell, pocketY + y * cell, cell - 4, cell - 4, 5);
+        }
+      }
+      for (const placement of pocket.placements) {
+        const size = rotatedSize(placement.item, placement.rotated);
+        const x = pocketX + placement.x * cell;
+        const y = pocketY + placement.y * cell;
+        const width = size.width * cell - 4;
+        const height = size.height * cell - 4;
+        const rarity = placement.item.rarity ?? "common";
+        this.lootGraphics.fillStyle(0x182229, 0.98).fillRoundedRect(x, y, width, height, 7);
+        this.lootGraphics.lineStyle(3, this.rarityColor(rarity), 0.95).strokeRoundedRect(x, y, width, height, 7);
+        const icon = this.add.graphics().setDepth(103);
+        this.drawLootIcon(icon, placement.item, x + width / 2, y + height / 2, Math.min(0.9, Math.min(width, height) / 56));
+        this.lootObjects.push(icon);
       }
     }
   }
 
   private drawLootIcon(
     graphics: Phaser.GameObjects.Graphics,
-    item: LootItem,
+    item: LootItem | ItemInstance,
     centerX: number,
     centerY: number,
     scale: number,
   ): void {
-    const rarity = this.rarityColor(item.rarity);
+    const rarity = this.rarityColor(item.rarity ?? "common");
     graphics.fillStyle(0x05080a, 0.55).fillEllipse(centerX + 3, centerY + 8, 42 * scale, 15 * scale);
     graphics.lineStyle(3 * scale, rarity, 0.9);
-    switch (item.icon) {
+    switch (item.icon ?? "pouch") {
       case "gem":
         graphics.fillStyle(0x49b8ad, 1).fillPoints([
           new Phaser.Geom.Point(centerX, centerY - 22 * scale),
@@ -413,11 +470,23 @@ export class HudScene extends Phaser.Scene {
   }
 
   private rarityColor(rarity: LootRarity): number {
-    return rarity === "rare" ? 0xa56de2 : rarity === "magic" ? 0x4d9fdc : 0xaab2b4;
+    return rarity === "red"
+      ? 0xd24f4b
+      : rarity === "rare"
+        ? 0xa56de2
+        : rarity === "magic"
+          ? 0x4d9fdc
+          : 0xaab2b4;
   }
 
   private rarityTextColor(rarity: LootRarity): string {
-    return rarity === "rare" ? "#c49aef" : rarity === "magic" ? "#72b9eb" : "#bfc6c8";
+    return rarity === "red"
+      ? "#ef8b86"
+      : rarity === "rare"
+        ? "#c49aef"
+        : rarity === "magic"
+          ? "#72b9eb"
+          : "#bfc6c8";
   }
 
   private clearLootObjects(): void {

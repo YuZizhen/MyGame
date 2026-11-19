@@ -10,6 +10,8 @@ export type ItemTag =
 
 export type ContainerKind = "rig" | "backpack" | "chest";
 export type ExtractionMode = "normal" | "drop_pack";
+export type ItemRarity = "common" | "magic" | "rare" | "red";
+export type ItemIcon = "gem" | "pouch" | "ring" | "blade" | "scroll" | "helm" | "axe" | "armor" | "relic";
 
 export interface ItemInstance {
   id: string;
@@ -20,6 +22,8 @@ export interface ItemInstance {
   tags: readonly ItemTag[];
   value: number;
   corruption: number;
+  rarity?: ItemRarity;
+  icon?: ItemIcon;
 }
 
 export interface PocketDefinition {
@@ -149,6 +153,25 @@ export function listContainerItems(container: ContainerState): readonly ItemInst
   return container.pockets.flatMap((pocket) => pocket.placements.map((placement) => placement.item));
 }
 
+export function containerCapacity(container: ContainerState): number {
+  return container.pockets.reduce((total, pocket) => {
+    if (!pocket.definition.mask) return total + pocket.definition.width * pocket.definition.height;
+    return total + pocket.definition.mask.flat().filter(Boolean).length;
+  }, 0);
+}
+
+export function containerUsedCells(container: ContainerState): number {
+  return container.pockets.reduce(
+    (total, pocket) =>
+      total +
+      pocket.placements.reduce((pocketTotal, placement) => {
+        const size = rotatedSize(placement.item, placement.rotated);
+        return pocketTotal + size.width * size.height;
+      }, 0),
+    0,
+  );
+}
+
 export function placeItem(
   container: ContainerState,
   pocketId: string,
@@ -157,7 +180,18 @@ export function placeItem(
   y: number,
   rotated = false,
 ): LoadoutResult<ContainerState> {
-  if (item.width <= 0 || item.height <= 0) return { ok: false, error: "invalid_item_size" };
+  if (
+    item.width <= 0 ||
+    item.height <= 0 ||
+    !Number.isInteger(item.width) ||
+    !Number.isInteger(item.height)
+  ) {
+    return { ok: false, error: "invalid_item_size" };
+  }
+  if (!Number.isInteger(x) || !Number.isInteger(y)) return { ok: false, error: "item_outside_pocket" };
+  if (container.kind === "rig" && item.tags.includes("red_cargo")) {
+    return { ok: false, error: "item_not_accepted" };
+  }
   if (listContainerItems(container).some((existing) => existing.id === item.id)) {
     return { ok: false, error: "duplicate_item" };
   }
@@ -213,6 +247,31 @@ export function placeItem(
   };
 }
 
+export function autoPlaceItem(
+  container: ContainerState,
+  item: ItemInstance,
+  allowRotation = true,
+): LoadoutResult<ContainerState> {
+  if (container.kind === "rig" && item.tags.includes("red_cargo")) {
+    return { ok: false, error: "item_not_accepted" };
+  }
+  let lastError: LoadoutError = "item_outside_pocket";
+  for (const pocket of container.pockets) {
+    const orientations = allowRotation && item.width !== item.height ? [false, true] : [false];
+    for (const rotated of orientations) {
+      const size = rotatedSize(item, rotated);
+      for (let y = 0; y <= pocket.definition.height - size.height; y += 1) {
+        for (let x = 0; x <= pocket.definition.width - size.width; x += 1) {
+          const result = placeItem(container, pocket.definition.id, item, x, y, rotated);
+          if (result.ok) return result;
+          lastError = result.error;
+        }
+      }
+    }
+  }
+  return { ok: false, error: lastError };
+}
+
 export function equipWeapon(loadout: LoadoutState, item: ItemInstance): LoadoutResult<LoadoutState> {
   if (!item.tags.includes("weapon")) return { ok: false, error: "weapon_required" };
   if (loadout.weapon) return { ok: false, error: "weapon_slot_occupied" };
@@ -235,6 +294,27 @@ export function loadoutCorruption(loadout: LoadoutState): number {
   return items.reduce((total, item) => total + item.corruption, 0);
 }
 
+function snapshotItem(item: ItemInstance): ItemInstance {
+  return { ...item, tags: [...item.tags] };
+}
+
+function snapshotContainer(container: ContainerState): ContainerState {
+  return {
+    ...container,
+    pockets: container.pockets.map((pocket) => ({
+      definition: {
+        ...pocket.definition,
+        acceptedTags: pocket.definition.acceptedTags ? [...pocket.definition.acceptedTags] : undefined,
+        mask: pocket.definition.mask?.map((row) => [...row]),
+      },
+      placements: pocket.placements.map((placement) => ({
+        ...placement,
+        item: snapshotItem(placement.item),
+      })),
+    })),
+  };
+}
+
 export function settleExtraction(loadout: LoadoutState, mode: ExtractionMode): ExtractionResult {
   const rigItemIds = listContainerItems(loadout.rig).map((item) => item.id);
   const weaponItemIds = loadout.weapon ? [loadout.weapon.id] : [];
@@ -244,9 +324,14 @@ export function settleExtraction(loadout: LoadoutState, mode: ExtractionMode): E
   const corruptionBefore = loadoutCorruption(loadout);
 
   if (mode === "normal") {
+    const retained: LoadoutState = {
+      weapon: loadout.weapon ? snapshotItem(loadout.weapon) : undefined,
+      rig: snapshotContainer(loadout.rig),
+      backpack: loadout.backpack ? snapshotContainer(loadout.backpack) : undefined,
+    };
     return {
       mode,
-      retained: loadout,
+      retained,
       retainedItemIds: [...weaponItemIds, ...rigItemIds, ...backpackItemIds],
       droppedItemIds: [],
       corruptionBefore,
@@ -255,13 +340,13 @@ export function settleExtraction(loadout: LoadoutState, mode: ExtractionMode): E
   }
 
   const retained: LoadoutState = {
-    weapon: loadout.weapon,
-    rig: loadout.rig,
+    weapon: loadout.weapon ? snapshotItem(loadout.weapon) : undefined,
+    rig: snapshotContainer(loadout.rig),
   };
   return {
     mode,
     retained,
-    droppedBackpack: loadout.backpack,
+    droppedBackpack: loadout.backpack ? snapshotContainer(loadout.backpack) : undefined,
     retainedItemIds: [...weaponItemIds, ...rigItemIds],
     droppedItemIds: backpackItemIds,
     corruptionBefore,

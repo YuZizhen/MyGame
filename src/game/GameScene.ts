@@ -1,18 +1,21 @@
 import Phaser from "phaser";
-import { generateDungeon } from "./DungeonGenerator";
 import {
-  findInventoryPlacement,
-  generateChestLoot,
-  INVENTORY_COLUMNS,
-  INVENTORY_ROWS,
-  usedInventoryCells,
-} from "./LootSystem";
+  ASSAULT_RIG,
+  EXPEDITION_BACKPACK,
+  autoPlaceItem,
+  containerCapacity,
+  containerUsedCells,
+  createEmptyContainer,
+  type ItemInstance,
+  type LoadoutState,
+} from "../domain/loadout";
+import { generateDungeon } from "./DungeonGenerator";
+import { generateChestLoot } from "./LootSystem";
 import type {
   ChestType,
   DungeonData,
   DungeonRoom,
   HudState,
-  InventoryItem,
   LootItem,
   LootUiState,
   RuntimeMapState,
@@ -79,7 +82,7 @@ export class GameScene extends Phaser.Scene {
   private controls!: ControlKeys;
   private mobs: MobState[] = [];
   private chests: ChestState[] = [];
-  private inventory: InventoryItem[] = [];
+  private loadout!: LoadoutState;
   private boss!: MobState;
   private fogGraphics!: Phaser.GameObjects.Graphics;
   private mapState!: RuntimeMapState;
@@ -271,7 +274,22 @@ export class GameScene extends Phaser.Scene {
   private resetRuntimeState(): void {
     this.mobs = [];
     this.chests = [];
-    this.inventory = [];
+    this.loadout = {
+      weapon: {
+        id: "starter_sword",
+        definitionId: "starter_sword",
+        name: "铁誓长剑",
+        width: 1,
+        height: 3,
+        tags: ["weapon"],
+        value: 0,
+        corruption: 0,
+        rarity: "common",
+        icon: "blade",
+      },
+      rig: createEmptyContainer(ASSAULT_RIG, "equipped_assault_rig"),
+      backpack: createEmptyContainer(EXPEDITION_BACKPACK, "equipped_expedition_backpack"),
+    };
     this.exploredRooms = new Set<number>();
     this.hp = PLAYER_MAX_HP;
     this.potions = 2;
@@ -796,7 +814,19 @@ export class GameScene extends Phaser.Scene {
     }[type];
   }
 
+  private canOpenLoadout(): boolean {
+    return this.runState === "playing" && !this.bossEncounterActive;
+  }
+
+  private rejectLoadoutOpen(): void {
+    this.game.events.emit("hud:banner", "首领交战中无法整理负载");
+  }
+
   private openChestPanel(chest: ChestState): void {
+    if (!this.canOpenLoadout()) {
+      this.rejectLoadoutOpen();
+      return;
+    }
     this.lootPanelOpen = true;
     this.activeLootChest = chest;
     this.emitLootState();
@@ -804,6 +834,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   private openInventoryPanel(): void {
+    if (!this.canOpenLoadout()) {
+      this.rejectLoadoutOpen();
+      return;
+    }
     this.lootPanelOpen = true;
     this.activeLootChest = undefined;
     this.emitLootState();
@@ -815,9 +849,7 @@ export class GameScene extends Phaser.Scene {
     this.game.events.emit("loot:state", {
       open: false,
       chestItems: [],
-      inventoryItems: this.inventory,
-      inventoryColumns: INVENTORY_COLUMNS,
-      inventoryRows: INVENTORY_ROWS,
+      loadout: this.loadout,
     } satisfies LootUiState);
   }
 
@@ -827,9 +859,7 @@ export class GameScene extends Phaser.Scene {
       chestId: this.activeLootChest?.id,
       chestName: this.activeLootChest ? this.chestName(this.activeLootChest.type) : "行囊",
       chestItems: this.activeLootChest?.loot ?? [],
-      inventoryItems: this.inventory,
-      inventoryColumns: INVENTORY_COLUMNS,
-      inventoryRows: INVENTORY_ROWS,
+      loadout: this.loadout,
     };
     this.game.events.emit("loot:state", state);
   }
@@ -838,18 +868,49 @@ export class GameScene extends Phaser.Scene {
     const chest = this.chests.find((entry) => entry.id === payload.chestId);
     const item = chest?.loot.find((entry) => entry.id === payload.itemId);
     if (!chest || !item) return;
-    const placement = findInventoryPlacement(this.inventory, item);
-    if (!placement) {
+    if (!this.loadout.backpack) {
+      this.game.events.emit("hud:banner", "当前未装备背包");
+      return;
+    }
+    const itemInstance = this.toItemInstance(item);
+    const placement = autoPlaceItem(this.loadout.backpack, itemInstance);
+    if (!placement.ok) {
       this.game.events.emit("hud:banner", `背包空间不足：需要 ${item.width}×${item.height}`);
       this.game.events.emit("audio:event", "loot.item.pickup_failed");
       return;
     }
-    this.inventory.push({ ...item, ...placement });
+    this.loadout = { ...this.loadout, backpack: placement.value };
     chest.loot = chest.loot.filter((entry) => entry.id !== item.id);
     this.game.events.emit("hud:banner", `已收取 ${item.name} · ${item.width}×${item.height}`);
     this.game.events.emit("audio:event", "loot.item.pickup");
     this.emitLootState();
     this.emitHudState();
+  }
+
+  private toItemInstance(item: LootItem): ItemInstance {
+    const tags: ItemInstance["tags"] =
+      item.rarity === "red"
+        ? ["red_cargo", "valuable"]
+        : item.icon === "blade" || item.icon === "axe"
+          ? ["weapon", "valuable"]
+          : item.icon === "armor" || item.icon === "helm"
+            ? ["armor", "valuable"]
+            : item.icon === "scroll"
+              ? ["tool", "valuable"]
+              : ["valuable"];
+    const corruption = item.rarity === "red" ? 30 : item.rarity === "rare" ? 10 : item.rarity === "magic" ? 3 : 0;
+    return {
+      id: item.id,
+      definitionId: item.templateId,
+      name: item.name,
+      width: item.width,
+      height: item.height,
+      tags,
+      value: item.value,
+      corruption,
+      rarity: item.rarity,
+      icon: item.icon,
+    };
   }
 
   private spawnMob(kind: MobKind, x: number, y: number): MobState {
@@ -1455,8 +1516,8 @@ export class GameScene extends Phaser.Scene {
               ? "按 E 查看宝箱"
               : "按住 E 搜索宝箱"
             : "",
-      inventoryUsed: usedInventoryCells(this.inventory),
-      inventoryCapacity: INVENTORY_COLUMNS * INVENTORY_ROWS,
+      inventoryUsed: this.loadout.backpack ? containerUsedCells(this.loadout.backpack) : 0,
+      inventoryCapacity: this.loadout.backpack ? containerCapacity(this.loadout.backpack) : 0,
       state: this.runState,
     };
     this.game.events.emit("hud:update", state);

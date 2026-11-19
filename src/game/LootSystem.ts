@@ -1,7 +1,4 @@
-import type { ChestType, InventoryItem, LootItem, LootRarity } from "./types";
-
-export const INVENTORY_COLUMNS = 6;
-export const INVENTORY_ROWS = 5;
+import type { ChestType, LootItem, LootRarity } from "./types";
 
 interface LootTemplate {
   id: string;
@@ -10,6 +7,7 @@ interface LootTemplate {
   height: number;
   baseValue: number;
   icon: LootItem["icon"];
+  forcedRarity?: LootRarity;
 }
 
 const TEMPLATES: LootTemplate[] = [
@@ -23,6 +21,16 @@ const TEMPLATES: LootTemplate[] = [
   { id: "oath_plate", name: "旧誓胸甲", width: 2, height: 2, baseValue: 58, icon: "armor" },
   { id: "corrupt_tablet", name: "腐化石板", width: 2, height: 2, baseValue: 64, icon: "relic" },
 ];
+
+const BOSS_RED_TEMPLATE: LootTemplate = {
+  id: "warden_idol",
+  name: "守门人赤红雕像",
+  width: 2,
+  height: 3,
+  baseValue: 220,
+  icon: "relic",
+  forcedRarity: "red",
+};
 
 function seededValue(seed: number): number {
   let value = seed + 0x6d2b79f5;
@@ -49,12 +57,15 @@ export function generateChestLoot(chestId: string, type: ChestType, seed: number
 
   for (let index = 0; index < itemCount; index += 1) {
     const templateRoll = seededValue(seed * 41 + index * 97 + 13);
-    let templateIndex = Math.floor(templateRoll * TEMPLATES.length);
-    if (type === "supply" && index === 0) templateIndex = Math.floor(templateRoll * 3);
-    if (type === "boss" && index === 0) templateIndex = 7 + Math.floor(templateRoll * 2);
-    const template = TEMPLATES[Math.min(TEMPLATES.length - 1, templateIndex)];
-    const rarity = type === "boss" && index === 0 ? "rare" : rarityFor(type, seededValue(seed * 67 + index * 131));
-    const multiplier = rarity === "rare" ? 5.5 : rarity === "magic" ? 2.4 : 1;
+    let template: LootTemplate;
+    if (type === "boss" && index === 0) {
+      template = BOSS_RED_TEMPLATE;
+    } else {
+      const templatePoolSize = type === "supply" && index === 0 ? 3 : TEMPLATES.length;
+      template = TEMPLATES[Math.min(templatePoolSize - 1, Math.floor(templateRoll * templatePoolSize))];
+    }
+    const rarity = template.forcedRarity ?? rarityFor(type, seededValue(seed * 67 + index * 131));
+    const multiplier = rarity === "red" ? 8.5 : rarity === "rare" ? 5.5 : rarity === "magic" ? 2.4 : 1;
     const variation = 0.9 + seededValue(seed * 101 + index * 53) * 0.2;
     items.push({
       id: `${chestId}_${index}`,
@@ -69,39 +80,5 @@ export function generateChestLoot(chestId: string, type: ChestType, seed: number
   }
 
   return items;
-}
-
-export function findInventoryPlacement(
-  inventory: InventoryItem[],
-  item: LootItem,
-  columns = INVENTORY_COLUMNS,
-  rows = INVENTORY_ROWS,
-): { x: number; y: number } | undefined {
-  const occupied = new Set<string>();
-  for (const existing of inventory) {
-    for (let y = existing.y; y < existing.y + existing.height; y += 1) {
-      for (let x = existing.x; x < existing.x + existing.width; x += 1) occupied.add(`${x}:${y}`);
-    }
-  }
-
-  for (let y = 0; y <= rows - item.height; y += 1) {
-    for (let x = 0; x <= columns - item.width; x += 1) {
-      let fits = true;
-      for (let offsetY = 0; offsetY < item.height && fits; offsetY += 1) {
-        for (let offsetX = 0; offsetX < item.width; offsetX += 1) {
-          if (occupied.has(`${x + offsetX}:${y + offsetY}`)) {
-            fits = false;
-            break;
-          }
-        }
-      }
-      if (fits) return { x, y };
-    }
-  }
-  return undefined;
-}
-
-export function usedInventoryCells(inventory: InventoryItem[]): number {
-  return inventory.reduce((total, item) => total + item.width * item.height, 0);
 }
 
