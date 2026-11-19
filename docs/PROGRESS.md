@@ -22,9 +22,9 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 
 ### P0 — Foundation
 
-- [ ] Add a pure TypeScript multi-container domain model.
-- [ ] Add Vitest and unit tests for independent pockets, placement, rotation, overlap rejection, and extraction settlement.
-- [ ] Add a dedicated weapon slot with item-tag validation.
+- [x] Add a pure TypeScript multi-container domain model.
+- [x] Add Vitest and unit tests for independent pockets, placement, rotation, overlap rejection, and extraction settlement.
+- [x] Add a dedicated weapon slot with item-tag validation.
 - [ ] Render rig and backpack side by side using the same pocket-view model.
 - [ ] Implement normal extraction and drop-pack extraction as atomic domain transactions.
 - [ ] Add versioned local profile persistence and corruption recovery.
@@ -59,8 +59,10 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 | Date | Stage | Verification | Result |
 |---|---|---|---|
 | 2026-11-20 | Baseline | `npm run build` | Passed; Vite bundle-size warning only |
+| 2026-11-20 | Container domain | `npm run check` | Passed; 7 tests and production build |
 
 ## Commits
 
 - `5dbdbd2` — `feat: establish playable PvE extraction prototype`
+- `8776254` — `docs: define loadout container architecture`
 
