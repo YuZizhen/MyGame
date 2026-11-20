@@ -88,9 +88,13 @@ interface ControlKeys {
   attack: Phaser.Input.Keyboard.Key;
   roll: Phaser.Input.Keyboard.Key;
   interact: Phaser.Input.Keyboard.Key;
-  inventory: Phaser.Input.Keyboard.Key;
   close: Phaser.Input.Keyboard.Key;
   restart: Phaser.Input.Keyboard.Key;
+  slot1: Phaser.Input.Keyboard.Key;
+  slot2: Phaser.Input.Keyboard.Key;
+  slot3: Phaser.Input.Keyboard.Key;
+  slot4: Phaser.Input.Keyboard.Key;
+  slot5: Phaser.Input.Keyboard.Key;
 }
 
 interface LoadoutItemPayload {
@@ -275,6 +279,7 @@ export class GameScene extends Phaser.Scene {
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.input.off(Phaser.Input.Events.POINTER_DOWN, this.handlePointerAttack, this);
+      this.game.events.off("input:inventory-toggle", this.handleInventoryShortcut, this);
       this.game.events.off("loot:take", this.handleLootTake, this);
       this.game.events.off("loadout:item-action", this.handleLoadoutItemAction, this);
       this.game.events.off("loadout:item-rotate", this.handleLoadoutItemRotate, this);
@@ -308,7 +313,13 @@ export class GameScene extends Phaser.Scene {
     if (this.extractionPanelOpen) {
       this.player.setVelocity(0, 0);
       this.mobs.forEach((mob) => mob.sprite.setVelocity(0, 0));
-      if (Phaser.Input.Keyboard.JustDown(this.controls.close)) this.closeExtractionPanel();
+      if (Phaser.Input.Keyboard.JustDown(this.controls.slot1)) {
+        this.handleExtractionChoice("normal");
+      } else if (Phaser.Input.Keyboard.JustDown(this.controls.slot2)) {
+        this.handleExtractionChoice("drop_pack");
+      } else if (Phaser.Input.Keyboard.JustDown(this.controls.close)) {
+        this.closeExtractionPanel();
+      }
       return;
     }
 
@@ -340,18 +351,18 @@ export class GameScene extends Phaser.Scene {
     if (this.lootPanelOpen) {
       this.player.setVelocity(0, 0);
       this.mobs.forEach((mob) => mob.sprite.setVelocity(0, 0));
-      if (Phaser.Input.Keyboard.JustDown(this.controls.inventory) || Phaser.Input.Keyboard.JustDown(this.controls.close)) {
+      const slotIndex = this.pressedLootSlotIndex();
+      const slottedItem = slotIndex === undefined ? undefined : this.activeLootChest?.loot[slotIndex];
+      if (slottedItem && this.activeLootChest) {
+        this.handleLootTake({ chestId: this.activeLootChest.id, itemId: slottedItem.id });
+      }
+      if (Phaser.Input.Keyboard.JustDown(this.controls.close)) {
         this.closeLootPanel();
       }
       if (time - this.lastHudUpdate >= 100) {
         this.lastHudUpdate = time;
         this.emitHudState();
       }
-      return;
-    }
-
-    if (Phaser.Input.Keyboard.JustDown(this.controls.inventory)) {
-      this.openInventoryPanel();
       return;
     }
 
@@ -1225,11 +1236,41 @@ export class GameScene extends Phaser.Scene {
       attack: Phaser.Input.Keyboard.KeyCodes.SPACE,
       roll: Phaser.Input.Keyboard.KeyCodes.SHIFT,
       interact: Phaser.Input.Keyboard.KeyCodes.E,
-      inventory: Phaser.Input.Keyboard.KeyCodes.TAB,
       close: Phaser.Input.Keyboard.KeyCodes.ESC,
       restart: Phaser.Input.Keyboard.KeyCodes.R,
+      slot1: Phaser.Input.Keyboard.KeyCodes.ONE,
+      slot2: Phaser.Input.Keyboard.KeyCodes.TWO,
+      slot3: Phaser.Input.Keyboard.KeyCodes.THREE,
+      slot4: Phaser.Input.Keyboard.KeyCodes.FOUR,
+      slot5: Phaser.Input.Keyboard.KeyCodes.FIVE,
     }) as ControlKeys;
+    this.input.keyboard!.addCapture([
+      Phaser.Input.Keyboard.KeyCodes.SPACE,
+      Phaser.Input.Keyboard.KeyCodes.UP,
+      Phaser.Input.Keyboard.KeyCodes.DOWN,
+      Phaser.Input.Keyboard.KeyCodes.LEFT,
+      Phaser.Input.Keyboard.KeyCodes.RIGHT,
+    ]);
+    this.game.events.on("input:inventory-toggle", this.handleInventoryShortcut, this);
     this.input.on(Phaser.Input.Events.POINTER_DOWN, this.handlePointerAttack, this);
+  }
+
+  private handleInventoryShortcut(): void {
+    if (this.runState !== "playing" || this.extractionPanelOpen) return;
+    if (this.lootPanelOpen) this.closeLootPanel();
+    else this.openInventoryPanel();
+  }
+
+  private pressedLootSlotIndex(): number | undefined {
+    const keys = [
+      this.controls.slot1,
+      this.controls.slot2,
+      this.controls.slot3,
+      this.controls.slot4,
+      this.controls.slot5,
+    ];
+    const index = keys.findIndex((key) => Phaser.Input.Keyboard.JustDown(key));
+    return index >= 0 ? index : undefined;
   }
 
   private updateFacing(): void {

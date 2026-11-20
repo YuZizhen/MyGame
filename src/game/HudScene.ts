@@ -42,7 +42,7 @@ const DEFAULT_PROFILE_SUMMARY: ProfileSummaryUi = {
   status: "new",
 };
 
-const LOOT_HINT = "点击转移 / 换装 · Shift+点击旋转 · 右键两次退回宝箱 · Tab / Esc 关闭";
+const LOOT_HINT = "数字 1–5 拾取 · 点击转移 / 换装 · Shift+点击旋转 · 右键两次退回 · Tab / Esc 关闭";
 
 export class HudScene extends Phaser.Scene {
   private hudState: HudState = { ...DEFAULT_HUD };
@@ -303,7 +303,7 @@ export class HudScene extends Phaser.Scene {
     this.createExtractionCard(state.normal, 150, 190, 450, 340);
     this.createExtractionCard(state.dropPack, 680, 190, 450, 340);
     const hint = this.add
-      .text(640, 582, "点击方案确认撤离 · Esc 返回继续整理", {
+      .text(640, 582, "按 1 / 2 或点击方案确认撤离 · Esc 返回继续整理", {
         fontFamily: "Microsoft YaHei, sans-serif",
         fontSize: "16px",
         color: "#aeb9bc",
@@ -334,7 +334,7 @@ export class HudScene extends Phaser.Scene {
       this.game.events.emit("extraction:choose", preview.mode);
     });
     const heading = this.add
-      .text(x + 28, y + 28, dropPack ? "丢包撤离" : "完整撤离", {
+      .text(x + 28, y + 28, dropPack ? "[2] 丢包撤离" : "[1] 完整撤离", {
         fontFamily: "Microsoft YaHei, sans-serif",
         fontSize: "27px",
         fontStyle: "bold",
@@ -425,7 +425,7 @@ export class HudScene extends Phaser.Scene {
     state.chestItems.slice(0, 5).forEach((item, index) => {
       const x = 132;
       const y = 190 + index * 76;
-      this.createChestItemCard(item, state.chestId!, x, y);
+      this.createChestItemCard(item, state.chestId!, x, y, index + 1);
     });
     if (state.chestItems.length > 5) {
       const overflow = this.add
@@ -451,7 +451,7 @@ export class HudScene extends Phaser.Scene {
     });
   }
 
-  private createChestItemCard(item: LootItem, chestId: string, x: number, y: number): void {
+  private createChestItemCard(item: LootItem, chestId: string, x: number, y: number, slotNumber: number): void {
     const color = this.rarityColor(item.rarity);
     const card = this.add
       .rectangle(x, y, 276, 64, 0x172027, 1)
@@ -467,7 +467,7 @@ export class HudScene extends Phaser.Scene {
     const icon = this.add.graphics().setDepth(103);
     this.drawLootIcon(icon, item, x + 32, y + 32, 0.58);
     const name = this.add
-      .text(x + 62, y + 9, item.name, {
+      .text(x + 62, y + 9, `${slotNumber}. ${item.name}`, {
         fontFamily: "Microsoft YaHei, sans-serif",
         fontSize: "16px",
         fontStyle: "bold",

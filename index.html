@@ -2,14 +2,25 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#080b0f" />
     <meta name="description" content="灰烬地穴：一款俯视角单机 PvE 暗黑探索网页游戏。" />
     <title>灰烬地穴 · PvE 原型</title>
   </head>
   <body>
-    <main id="game-shell" aria-label="灰烬地穴游戏画面">
+    <main
+      id="game-shell"
+      role="application"
+      tabindex="0"
+      aria-label="灰烬地穴游戏"
+      aria-describedby="game-help"
+    >
       <div id="game"></div>
+      <p id="game-help" class="visually-hidden">
+        使用 W A S D 移动，空格或鼠标左键攻击，Shift 翻滚，按住 E 搜索，Tab 打开负载，M 静音。
+        宝箱界面按数字 1 到 5 拾取物品；撤离界面按 1 完整撤离，按 2 丢包撤离；Escape 关闭当前面板。
+      </p>
+      <div id="game-status" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></div>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>

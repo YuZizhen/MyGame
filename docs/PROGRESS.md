@@ -36,6 +36,8 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - [x] Added a Web Audio event consumer with autoplay unlock, per-event cooldowns, volume control, and `M` mute.
 - [x] Added synthesized cues for every audio event currently emitted by gameplay.
 - [x] Added rarity-aware pickup/reveal cues and per-container search loops that stop on cancel, damage, or completion.
+- [x] Restored browser/pinch zoom, added screen-reader instructions/live announcements, and made the game shell keyboard-focusable.
+- [x] Added keyboard loot slots (`1–5`) and extraction choices (`1/2`) with visible prompts.
 
 ## Active plan
 
@@ -51,27 +53,29 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 
 ### P1 — Interaction and quality
 
-- [ ] Add drag, rotation, discard, and cross-container movement.
+- [x] Add rotation, safe return, and cross-container movement.
+- [ ] Add pointer drag-and-drop interactions.
 - [ ] Add item attributes and equipment comparison.
 - [ ] Split `GameScene` and `HudScene` responsibilities.
 - [x] Prevent enemy overlap and add chest collision.
 - [x] Skip unchanged fog redraws and gate minimap rendering by map-state revision.
 - [x] Add a real audio event consumer.
-- [ ] Improve keyboard accessibility and allow browser zoom.
+- [x] Improve keyboard accessibility and allow browser zoom.
 
 ### P2 — Expansion
 
 - [ ] Add run seeds, functional room types, shortcuts, and early extraction.
 - [ ] Add insurance storage and recovery rules.
-- [ ] Add browser regression tests and CI.
+- [x] Add real-browser regression tests for keyboard focus, looting, and extraction.
+- [ ] Run unit, build, and browser regression tests in CI.
 
 ## Known risks
 
 - `GameScene.ts` and `HudScene.ts` are oversized and should not absorb more domain logic.
-- Boss attacks use delayed callbacks that can complete behind the inventory screen.
-- The current single rectangular inventory model cannot represent independent rig pockets.
-- There is no persistent profile, warehouse, or atomic extraction settlement yet.
-- Fog and minimap redraw the full map frequently.
+- Loadout organization supports click actions but not direct pointer drag-and-drop yet.
+- Items do not expose enough combat attributes for meaningful equipment comparison.
+- CI still needs to invoke the browser regression runner and provide an installed Chromium-compatible browser.
+- The production bundle still reports a Phaser-driven chunk-size warning.
 
 ## Verification log
 
@@ -91,6 +95,10 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 | 2026-11-20 | Loadout organization | Headless Edge at `?qa=rotate` and `?qa=discard` | Passed; in-place rotation and recoverable chest return verified |
 | 2026-11-20 | Audio event layer | `npm run check` | Passed; 37 tests and production build |
 | 2026-11-20 | Audio event layer | Headless Edge HUD render | Passed; mute shortcut help remains visible without clipping |
+| 2026-11-20 | Accessibility | `npm run check` | Passed; 37 tests and production build |
+| 2026-11-20 | Accessibility | Headless Edge at `?qa=loot` and `?qa=extract` | Passed; numbered keyboard prompts render without clipping |
+| 2026-11-20 | Accessibility | Built HTML inspection | Passed; restrictive viewport flags absent and ARIA help/live regions present |
+| 2026-11-20 | Browser regression | `npm run test:e2e` | Passed; 3 Edge scenarios cover Tab focus, keyboard looting, live announcements, drop-pack extraction, and a touch-capture smoke check |
 
 ## Commits
 
@@ -102,4 +110,5 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - `3d8b318` — `fix: improve collisions and map rendering`
 - `8390db0` — `feat: enable interactive rig loadouts`
 - `6db6996` — `feat: add safe loadout organization actions`
+- `ed26ac8` — `feat: add responsive synthesized game audio`
 

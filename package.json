@@ -8,13 +8,16 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 0.0.0.0",
     "test": "vitest run",
+    "test:e2e": "node scripts/e2e.mjs",
     "test:watch": "vitest",
-    "check": "npm run test && npm run build"
+    "check": "npm run test && npm run build",
+    "check:full": "npm run check && npm run test:e2e"
   },
   "dependencies": {
     "phaser": "^3.90.0"
   },
   "devDependencies": {
+    "playwright-core": "^1.65.1",
     "typescript": "^5.9.3",
     "vite": "^7.2.2",
     "vitest": "^5.1.1"
