@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { generateChestLoot } from "./LootSystem";
+import { generateChestLoot, lootRevealDuration } from "./LootSystem";
 
 describe("generateChestLoot", () => {
   it("reserves red cargo for the boss chest", () => {
@@ -29,5 +29,11 @@ describe("generateChestLoot", () => {
       const [first] = generateChestLoot(`supply_${seed}`, "supply", seed);
       expect(first.tags.some((tag) => tag === "medicine" || tag === "ammo" || tag === "tactical")).toBe(true);
     }
+  });
+
+  it("takes progressively longer to identify rarer loot", () => {
+    const durations = (["common", "magic", "rare", "red"] as const).map(lootRevealDuration);
+    expect(durations).toEqual([450, 750, 1100, 1600]);
+    expect(durations).toEqual([...durations].sort((left, right) => left - right));
   });
 });

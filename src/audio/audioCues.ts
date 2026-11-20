@@ -20,7 +20,6 @@ export type AudioRarity = "common" | "magic" | "rare" | "red";
 export interface AudioEventPayload {
   containerId?: string;
   rarity?: AudioRarity;
-  highestRarity?: AudioRarity;
 }
 
 const cue = (
@@ -42,11 +41,12 @@ export const AUDIO_CUES = {
     { frequency: 105, durationMs: 150, waveform: "triangle", endFrequency: 75 },
     { frequency: 420, durationMs: 120, offsetMs: 90, waveform: "sine", endFrequency: 620 },
   ),
-  "container.loot.reveal": cue(
-    300,
-    0.2,
-    { frequency: 620, durationMs: 100, waveform: "sine" },
-    { frequency: 830, durationMs: 140, offsetMs: 90, waveform: "sine" },
+  "loot.search.item.start": cue(90, 0.12, { frequency: 190, durationMs: 80, waveform: "triangle", endFrequency: 240 }),
+  "loot.search.item.cancel": cue(120, 0.13, { frequency: 210, durationMs: 90, waveform: "square", endFrequency: 120 }),
+  "loot.search.item.reveal": cue(
+    80,
+    0.16,
+    { frequency: 420, durationMs: 70, waveform: "triangle", endFrequency: 520 },
   ),
   "loot.item.pickup": cue(70, 0.16, { frequency: 720, durationMs: 75, waveform: "sine", endFrequency: 920 }),
   "loot.item.pickup_failed": cue(350, 0.2, { frequency: 150, durationMs: 130, waveform: "square", endFrequency: 95 }),
@@ -124,7 +124,7 @@ const PICKUP_RARITY_CUES: Record<AudioRarity, AudioCue> = {
 };
 
 const REVEAL_RARITY_CUES: Record<AudioRarity, AudioCue> = {
-  common: AUDIO_CUES["container.loot.reveal"],
+  common: AUDIO_CUES["loot.search.item.reveal"],
   magic: cue(
     320,
     0.22,
@@ -154,8 +154,8 @@ export function getAudioCue(eventName: string, payload?: AudioEventPayload): Aud
   if (eventName === "loot.item.pickup") {
     return PICKUP_RARITY_CUES[payload?.rarity ?? "common"];
   }
-  if (eventName === "container.loot.reveal") {
-    return REVEAL_RARITY_CUES[payload?.highestRarity ?? "common"];
+  if (eventName === "loot.search.item.reveal") {
+    return REVEAL_RARITY_CUES[payload?.rarity ?? "common"];
   }
   return AUDIO_CUES[eventName as AudioEventName];
 }

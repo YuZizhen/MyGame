@@ -13,6 +13,7 @@ import {
   equipWeapon,
   listContainerItems,
   moveStoredItem,
+  moveStoredItemToPosition,
   placeItem,
   removeItem,
   rotateItemInPlace,
@@ -224,6 +225,123 @@ describe("cross-container transactions", () => {
     expect(result.ok).toBe(false);
     expect(listContainerItems(loadout.rig)).toEqual([]);
     expect(listContainerItems(loadout.backpack!).map((entry) => entry.id)).toEqual(["cargo"]);
+  });
+
+  it("moves an item to an exact pocket position while preserving its orientation", () => {
+    const magazine = item({ id: "magazine", width: 2, height: 1, tags: ["ammo"] });
+    const backpack = expectPlaced(
+      placeItem(createEmptyContainer(EXPEDITION_BACKPACK, "bag-1"), "main", magazine, 0, 0, true),
+    );
+    const loadout: LoadoutState = {
+      rig: createEmptyContainer(ASSAULT_RIG, "rig-1"),
+      backpack,
+    };
+
+    const result = moveStoredItemToPosition(loadout, magazine.id, "backpack", "backpack", "main", 3, 2);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const placement = result.value.backpack?.pockets[0].placements[0];
+      expect(placement).toMatchObject({ x: 3, y: 2, rotated: true });
+    }
+    expect(loadout.backpack?.pockets[0].placements[0]).toMatchObject({ x: 0, y: 0, rotated: true });
+  });
+
+  it("treats dropping on the original position as an identity-preserving no-op", () => {
+    const stored = item({ id: "stored" });
+    const backpack = expectPlaced(
+      placeItem(createEmptyContainer(EXPEDITION_BACKPACK, "bag-1"), "main", stored, 1, 2),
+    );
+    const loadout: LoadoutState = {
+      rig: createEmptyContainer(ASSAULT_RIG, "rig-1"),
+      backpack,
+    };
+
+    const result = moveStoredItemToPosition(loadout, stored.id, "backpack", "backpack", "main", 1, 2);
+
+    expect(result).toEqual({ ok: true, value: loadout });
+  });
+
+  it("rolls back an exact drag transaction when the destination overlaps", () => {
+    const moving = item({ id: "moving", width: 2, height: 1 });
+    const blocker = item({ id: "blocker", width: 2, height: 2 });
+    const withMoving = expectPlaced(
+      placeItem(createEmptyContainer(EXPEDITION_BACKPACK, "bag-1"), "main", moving, 0, 0),
+    );
+    const backpack = expectPlaced(placeItem(withMoving, "main", blocker, 3, 2));
+    const loadout: LoadoutState = {
+      rig: createEmptyContainer(ASSAULT_RIG, "rig-1"),
+      backpack,
+    };
+
+    const result = moveStoredItemToPosition(loadout, moving.id, "backpack", "backpack", "main", 3, 2);
+
+    expect(result).toEqual({ ok: false, error: "item_overlaps" });
+    expect(loadout.backpack?.pockets[0].placements.map((placement) => placement.item.id)).toEqual([
+      "moving",
+      "blocker",
+    ]);
+  });
+
+  it("keeps rig acceptance rules when dragging to an exact slot", () => {
+    const cargo = item({ id: "red-cargo", tags: ["red_cargo", "valuable"] });
+    const backpack = expectPlaced(
+      placeItem(createEmptyContainer(EXPEDITION_BACKPACK, "bag-1"), "main", cargo, 0, 0),
+    );
+    const loadout: LoadoutState = {
+      rig: createEmptyContainer(ASSAULT_RIG, "rig-1"),
+      backpack,
+    };
+
+    const result = moveStoredItemToPosition(loadout, cargo.id, "backpack", "rig", "medicine", 0, 0);
+
+    expect(result).toEqual({ ok: false, error: "item_not_accepted" });
+    expect(listContainerItems(loadout.backpack!).map((entry) => entry.id)).toEqual(["red-cargo"]);
+  });
+
+  it("moves compatible items across containers and between exact rig pockets", () => {
+    const medicine = item({ id: "medicine", tags: ["medicine"] });
+    const magazine = item({ id: "magazine", width: 2, height: 1, tags: ["ammo"] });
+    const backpack = expectPlaced(
+      placeItem(createEmptyContainer(EXPEDITION_BACKPACK, "bag-1"), "main", medicine, 0, 0),
+    );
+    const rig = expectPlaced(
+      placeItem(createEmptyContainer(ASSAULT_RIG, "rig-1"), "magazine_left", magazine, 0, 0),
+    );
+    const loadout: LoadoutState = { rig, backpack };
+
+    const movedMedicine = expectPlaced(
+      moveStoredItemToPosition(loadout, medicine.id, "backpack", "rig", "medicine", 0, 0),
+    );
+    const movedMagazine = expectPlaced(
+      moveStoredItemToPosition(movedMedicine, magazine.id, "rig", "rig", "magazine_right", 0, 0),
+    );
+
+    expect(movedMagazine.rig.pockets.find((pocket) => pocket.definition.id === "medicine")?.placements[0].item.id)
+      .toBe("medicine");
+    expect(movedMagazine.rig.pockets.find((pocket) => pocket.definition.id === "magazine_right")?.placements[0])
+      .toMatchObject({ x: 0, y: 0, rotated: false });
+    expect(listContainerItems(movedMagazine.backpack!)).toEqual([]);
+  });
+
+  it.each([
+    ["missing", 0, 0, "pocket_not_found"],
+    ["main", -1, 0, "item_outside_pocket"],
+    ["main", 0.5, 0, "item_outside_pocket"],
+  ] as const)("rolls back an invalid exact destination (%s, %s, %s)", (pocketId, x, y, error) => {
+    const stored = item({ id: "stored" });
+    const backpack = expectPlaced(
+      placeItem(createEmptyContainer(EXPEDITION_BACKPACK, "bag-1"), "main", stored, 0, 0),
+    );
+    const loadout: LoadoutState = {
+      rig: createEmptyContainer(ASSAULT_RIG, "rig-1"),
+      backpack,
+    };
+
+    const result = moveStoredItemToPosition(loadout, stored.id, "backpack", "backpack", pocketId, x, y);
+
+    expect(result).toEqual({ ok: false, error });
+    expect(loadout.backpack?.pockets[0].placements[0]).toMatchObject({ x: 0, y: 0, item: { id: "stored" } });
   });
 
   it("removes an item immutably and detects duplicate loadout IDs", () => {

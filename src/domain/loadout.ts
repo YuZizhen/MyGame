@@ -356,6 +356,52 @@ export function moveStoredItem(
   };
 }
 
+export function moveStoredItemToPosition(
+  loadout: LoadoutState,
+  itemId: string,
+  source: StoredContainerSlot,
+  target: StoredContainerSlot,
+  pocketId: string,
+  x: number,
+  y: number,
+): LoadoutResult<LoadoutState> {
+  const valid = validateLoadout(loadout);
+  if (!valid.ok) return valid;
+  const sourceContainer = loadout[source];
+  const targetContainer = loadout[target];
+  if (!sourceContainer || !targetContainer) return { ok: false, error: "container_missing" };
+
+  const removed = removeItem(sourceContainer, itemId);
+  if (!removed.ok) return removed;
+  if (
+    source === target
+    && removed.value.pocketId === pocketId
+    && removed.value.placement.x === x
+    && removed.value.placement.y === y
+  ) {
+    return { ok: true, value: loadout };
+  }
+  const placementTarget = source === target ? removed.value.container : targetContainer;
+  const placed = placeItem(
+    placementTarget,
+    pocketId,
+    removed.value.item,
+    x,
+    y,
+    removed.value.placement.rotated,
+  );
+  if (!placed.ok) return placed;
+
+  const nextLoadout: LoadoutState = source === target
+    ? { ...loadout, [source]: placed.value }
+    : {
+        ...loadout,
+        [source]: removed.value.container,
+        [target]: placed.value,
+      };
+  return validateLoadout(nextLoadout);
+}
+
 export function rotateItemInPlace(
   container: ContainerState,
   itemId: string,

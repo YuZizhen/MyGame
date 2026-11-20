@@ -9,7 +9,9 @@ const EMITTED_AUDIO_EVENTS = [
   "container.search.cancel",
   "container.search.complete",
   "container.open",
-  "container.loot.reveal",
+  "loot.search.item.start",
+  "loot.search.item.cancel",
+  "loot.search.item.reveal",
   "loot.item.pickup",
   "loot.item.pickup_failed",
   "inventory.item.place",
@@ -54,8 +56,8 @@ describe("audio cue registry", () => {
     expect(getAudioCue("loot.item.pickup", { rarity: "red" })?.tones.length).toBeGreaterThan(
       getAudioCue("loot.item.pickup", { rarity: "common" })?.tones.length ?? 0,
     );
-    expect(getAudioCue("container.loot.reveal", { highestRarity: "rare" })).not.toBe(
-      getAudioCue("container.loot.reveal", { highestRarity: "common" }),
+    expect(getAudioCue("loot.search.item.reveal", { rarity: "red" })?.tones.length).toBeGreaterThan(
+      getAudioCue("loot.search.item.reveal", { rarity: "common" })?.tones.length ?? 0,
     );
   });
 });

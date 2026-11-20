@@ -73,6 +73,9 @@ export interface LootUiState {
   chestId?: string;
   chestName?: string;
   chestItems: LootItem[];
+  revealedItemIds?: readonly string[];
+  searchingItemId?: string;
+  searchProgress?: number;
   loadout?: LoadoutState;
 }
 

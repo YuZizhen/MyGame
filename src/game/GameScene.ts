@@ -10,6 +10,7 @@ import {
   equipWeaponFromContainer,
   listContainerItems,
   moveStoredItem,
+  moveStoredItemToPosition,
   rotateStoredItem,
   settleExtraction,
   unequipWeaponToBackpack,
@@ -27,7 +28,7 @@ import {
   type ProfileLoadStatus,
 } from "../profile/profileStore";
 import { generateDungeon } from "./DungeonGenerator";
-import { generateChestLoot } from "./LootSystem";
+import { generateChestLoot, lootRevealDuration } from "./LootSystem";
 import type {
   ChestType,
   DungeonData,
@@ -76,8 +77,16 @@ interface ChestState {
   lock: Phaser.GameObjects.Arc;
   glow: Phaser.GameObjects.Image;
   loot: LootItem[];
+  revealedItemIds: Set<string>;
   opened: boolean;
   searchDuration: number;
+}
+
+interface LootItemSearchState {
+  chestId: string;
+  itemId: string;
+  startedAt: number;
+  duration: number;
 }
 
 interface ControlKeys {
@@ -88,18 +97,19 @@ interface ControlKeys {
   attack: Phaser.Input.Keyboard.Key;
   roll: Phaser.Input.Keyboard.Key;
   interact: Phaser.Input.Keyboard.Key;
-  close: Phaser.Input.Keyboard.Key;
   restart: Phaser.Input.Keyboard.Key;
-  slot1: Phaser.Input.Keyboard.Key;
-  slot2: Phaser.Input.Keyboard.Key;
-  slot3: Phaser.Input.Keyboard.Key;
-  slot4: Phaser.Input.Keyboard.Key;
-  slot5: Phaser.Input.Keyboard.Key;
 }
 
 interface LoadoutItemPayload {
   source: StoredContainerSlot;
   itemId: string;
+}
+
+interface LoadoutDropPayload extends LoadoutItemPayload {
+  target: StoredContainerSlot;
+  pocketId: string;
+  x: number;
+  y: number;
 }
 
 export class GameScene extends Phaser.Scene {
@@ -160,6 +170,9 @@ export class GameScene extends Phaser.Scene {
   private qaOpenExtraction = false;
   private qaExtractionMode?: ExtractionMode;
   private pendingDiscard?: { itemId: string; expiresAt: number };
+  private lootItemSearch?: LootItemSearchState;
+  private lastLootSearchUiAt = 0;
+  private loadoutDragActive = false;
   private returnedLootCounter = 0;
   private runState: "playing" | "won" | "lost" = "playing";
   private currentObjective = "探索灰烬地穴，寻找遗迹守门人";
@@ -271,6 +284,7 @@ export class GameScene extends Phaser.Scene {
     if (qaMode?.startsWith("extract")) {
       const bossChest = this.chests.find((chest) => chest.type === "boss");
       if (bossChest?.loot[0]) {
+        bossChest.revealedItemIds.add(bossChest.loot[0].id);
         this.handleLootTake({ chestId: bossChest.id, itemId: bossChest.loot[0].id });
       }
       this.qaOpenExtraction = true;
@@ -279,15 +293,20 @@ export class GameScene extends Phaser.Scene {
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.input.off(Phaser.Input.Events.POINTER_DOWN, this.handlePointerAttack, this);
+      this.input.keyboard?.off("keydown", this.handlePanelKeyDown, this);
       this.game.events.off("input:inventory-toggle", this.handleInventoryShortcut, this);
       this.game.events.off("loot:take", this.handleLootTake, this);
       this.game.events.off("loadout:item-action", this.handleLoadoutItemAction, this);
+      this.game.events.off("loadout:item-drop", this.handleLoadoutItemDrop, this);
+      this.game.events.off("loadout:drag-state", this.handleLoadoutDragState, this);
       this.game.events.off("loadout:item-rotate", this.handleLoadoutItemRotate, this);
       this.game.events.off("loadout:item-discard", this.handleLoadoutItemDiscard, this);
       this.game.events.off("extraction:choose", this.handleExtractionChoice, this);
     });
     this.game.events.on("loot:take", this.handleLootTake, this);
     this.game.events.on("loadout:item-action", this.handleLoadoutItemAction, this);
+    this.game.events.on("loadout:item-drop", this.handleLoadoutItemDrop, this);
+    this.game.events.on("loadout:drag-state", this.handleLoadoutDragState, this);
     this.game.events.on("loadout:item-rotate", this.handleLoadoutItemRotate, this);
     this.game.events.on("loadout:item-discard", this.handleLoadoutItemDiscard, this);
     this.game.events.on("extraction:choose", this.handleExtractionChoice, this);
@@ -313,13 +332,6 @@ export class GameScene extends Phaser.Scene {
     if (this.extractionPanelOpen) {
       this.player.setVelocity(0, 0);
       this.mobs.forEach((mob) => mob.sprite.setVelocity(0, 0));
-      if (Phaser.Input.Keyboard.JustDown(this.controls.slot1)) {
-        this.handleExtractionChoice("normal");
-      } else if (Phaser.Input.Keyboard.JustDown(this.controls.slot2)) {
-        this.handleExtractionChoice("drop_pack");
-      } else if (Phaser.Input.Keyboard.JustDown(this.controls.close)) {
-        this.closeExtractionPanel();
-      }
       return;
     }
 
@@ -328,6 +340,7 @@ export class GameScene extends Phaser.Scene {
       this.qaLootChest = undefined;
       this.openChestPanel(chest);
       if (this.qaTakeFirstLoot && chest.loot[0]) {
+        chest.revealedItemIds.add(chest.loot[0].id);
         const itemId = `${this.runId}:${chest.loot[0].id}`;
         this.qaTakeFirstLoot = false;
         this.handleLootTake({ chestId: chest.id, itemId: chest.loot[0].id });
@@ -351,14 +364,7 @@ export class GameScene extends Phaser.Scene {
     if (this.lootPanelOpen) {
       this.player.setVelocity(0, 0);
       this.mobs.forEach((mob) => mob.sprite.setVelocity(0, 0));
-      const slotIndex = this.pressedLootSlotIndex();
-      const slottedItem = slotIndex === undefined ? undefined : this.activeLootChest?.loot[slotIndex];
-      if (slottedItem && this.activeLootChest) {
-        this.handleLootTake({ chestId: this.activeLootChest.id, itemId: slottedItem.id });
-      }
-      if (Phaser.Input.Keyboard.JustDown(this.controls.close)) {
-        this.closeLootPanel();
-      }
+      this.updateLootItemSearch(time);
       if (time - this.lastHudUpdate >= 100) {
         this.lastHudUpdate = time;
         this.emitHudState();
@@ -447,6 +453,9 @@ export class GameScene extends Phaser.Scene {
     this.qaOpenExtraction = false;
     this.qaExtractionMode = undefined;
     this.pendingDiscard = undefined;
+    this.lootItemSearch = undefined;
+    this.lastLootSearchUiAt = 0;
+    this.loadoutDragActive = false;
     this.returnedLootCounter = 0;
     this.runState = "playing";
     this.currentObjective = "探索灰烬地穴，寻找遗迹守门人";
@@ -808,6 +817,7 @@ export class GameScene extends Phaser.Scene {
       lock,
       glow,
       loot: generateChestLoot(id, type, roomId * 73 + 19),
+      revealedItemIds: new Set<string>(),
       opened: false,
       searchDuration,
     };
@@ -827,7 +837,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     if (nearest.opened) {
-      if (Phaser.Input.Keyboard.JustDown(this.controls.interact)) {
+      if (!this.searchRequiresRelease && Phaser.Input.Keyboard.JustDown(this.controls.interact)) {
         this.openChestPanel(nearest);
         return true;
       }
@@ -980,10 +990,6 @@ export class GameScene extends Phaser.Scene {
     this.pendingDiscard = undefined;
     this.activeLootChest = chest;
     this.emitLootState();
-    this.game.events.emit("audio:event", "container.loot.reveal", {
-      containerId: chest.id,
-      highestRarity: this.highestLootRarity(chest.loot),
-    });
   }
 
   private openInventoryPanel(): void {
@@ -998,6 +1004,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   private closeLootPanel(): void {
+    this.cancelLootItemSearch();
+    this.loadoutDragActive = false;
     this.lootPanelOpen = false;
     this.pendingDiscard = undefined;
     this.activeLootChest = undefined;
@@ -1014,6 +1022,11 @@ export class GameScene extends Phaser.Scene {
       chestId: this.activeLootChest?.id,
       chestName: this.activeLootChest ? this.chestName(this.activeLootChest.type) : "行囊",
       chestItems: this.activeLootChest?.loot ?? [],
+      revealedItemIds: this.activeLootChest ? [...this.activeLootChest.revealedItemIds] : undefined,
+      searchingItemId: this.lootItemSearch?.itemId,
+      searchProgress: this.lootItemSearch
+        ? Phaser.Math.Clamp((this.time.now - this.lootItemSearch.startedAt) / this.lootItemSearch.duration, 0, 1)
+        : undefined,
       loadout: this.loadout,
     };
     this.game.events.emit("loot:state", state);
@@ -1023,6 +1036,10 @@ export class GameScene extends Phaser.Scene {
     const chest = this.chests.find((entry) => entry.id === payload.chestId);
     const item = chest?.loot.find((entry) => entry.id === payload.itemId);
     if (!chest || !item) return;
+    if (!chest.revealedItemIds.has(item.id)) {
+      this.startLootItemSearch(chest, item);
+      return;
+    }
     if (!this.loadout.backpack) {
       this.showLoadoutMessage("当前未装备背包");
       return;
@@ -1036,10 +1053,96 @@ export class GameScene extends Phaser.Scene {
     }
     this.loadout = { ...this.loadout, backpack: placement.value };
     chest.loot = chest.loot.filter((entry) => entry.id !== item.id);
+    chest.revealedItemIds.delete(item.id);
     this.game.events.emit("audio:event", "loot.item.pickup", { rarity: item.rarity });
     this.emitLootState();
     this.showLoadoutMessage(`已收取 ${item.name} · ${item.width}×${item.height}`);
     this.emitHudState();
+  }
+
+  private startLootItemSearch(chest: ChestState, item: LootItem): void {
+    if (this.loadoutDragActive) {
+      this.showLoadoutMessage("请先放下正在拖动的物品");
+      return;
+    }
+    if (this.lootItemSearch?.chestId === chest.id && this.lootItemSearch.itemId === item.id) return;
+    this.cancelLootItemSearch();
+    this.lootItemSearch = {
+      chestId: chest.id,
+      itemId: item.id,
+      startedAt: this.time.now,
+      duration: lootRevealDuration(item.rarity),
+    };
+    this.lastLootSearchUiAt = 0;
+    this.game.events.emit("audio:event", "loot.search.item.start", { containerId: chest.id });
+    this.emitLootState();
+  }
+
+  private updateLootItemSearch(time: number): void {
+    const search = this.lootItemSearch;
+    if (!search) return;
+    const chest = this.activeLootChest?.id === search.chestId ? this.activeLootChest : undefined;
+    const item = chest?.loot.find((entry) => entry.id === search.itemId);
+    if (!chest || !item) {
+      this.cancelLootItemSearch();
+      return;
+    }
+    if (time - search.startedAt >= search.duration) {
+      chest.revealedItemIds.add(item.id);
+      this.lootItemSearch = undefined;
+      this.game.events.emit("audio:event", "loot.search.item.reveal", {
+        containerId: chest.id,
+        rarity: item.rarity,
+      });
+      this.spawnLootRevealEcho(chest, item.rarity);
+      this.emitLootState();
+      this.showLoadoutMessage(`发现 ${item.name} · ${item.width}×${item.height}`);
+      return;
+    }
+    if (time - this.lastLootSearchUiAt >= 80) {
+      this.lastLootSearchUiAt = time;
+      this.game.events.emit("loot:search-progress", {
+        itemId: search.itemId,
+        progress: Phaser.Math.Clamp((time - search.startedAt) / search.duration, 0, 1),
+      });
+    }
+  }
+
+  private handleLoadoutDragState(active: boolean): void {
+    this.loadoutDragActive = active;
+  }
+
+  private cancelLootItemSearch(): void {
+    if (!this.lootItemSearch) return;
+    this.game.events.emit("audio:event", "loot.search.item.cancel", {
+      containerId: this.lootItemSearch.chestId,
+    });
+    this.lootItemSearch = undefined;
+    this.lastLootSearchUiAt = 0;
+  }
+
+  private spawnLootRevealEcho(chest: ChestState, rarity: LootRarity): void {
+    const color = { common: 0xb5bec1, magic: 0x4d9fdc, rare: 0xa56de2, red: 0xc84843 }[rarity];
+    const height = { common: 18, magic: 28, rare: 42, red: 56 }[rarity];
+    const glow = this.add.graphics().setDepth(chest.container.y + 3);
+    glow.fillStyle(color, rarity === "common" ? 0.12 : 0.2);
+    glow.fillEllipse(chest.container.x, chest.container.y - 18, 30, 10);
+    glow.fillTriangle(
+      chest.container.x - 11,
+      chest.container.y - 18,
+      chest.container.x + 11,
+      chest.container.y - 18,
+      chest.container.x,
+      chest.container.y - 18 - height,
+    );
+    this.tweens.add({
+      targets: glow,
+      alpha: 0,
+      y: -8,
+      duration: rarity === "red" ? 650 : 420,
+      ease: "Sine.easeOut",
+      onComplete: () => glow.destroy(),
+    });
   }
 
   private handleLoadoutItemAction(payload: {
@@ -1110,6 +1213,49 @@ export class GameScene extends Phaser.Scene {
     this.showLoadoutMessage(`已旋转 ${item.name}`);
   }
 
+  private handleLoadoutItemDrop(payload: LoadoutDropPayload): void {
+    if (!this.lootPanelOpen) return;
+    const sourceContainer = this.loadout[payload.source];
+    const item = sourceContainer
+      ? listContainerItems(sourceContainer).find((entry) => entry.id === payload.itemId)
+      : undefined;
+    if (!item) return;
+
+    const previousLoadout = this.loadout;
+    const result = moveStoredItemToPosition(
+      previousLoadout,
+      item.id,
+      payload.source,
+      payload.target,
+      payload.pocketId,
+      payload.x,
+      payload.y,
+    );
+    if (!result.ok) {
+      const reason = result.error === "item_not_accepted"
+        ? "目标口袋不接受该类物品"
+        : result.error === "item_overlaps"
+          ? "目标格位已有物品"
+          : result.error === "item_outside_pocket"
+            ? "物品超出口袋边界"
+            : "无法放入目标格位";
+      this.game.events.emit("audio:event", "inventory.item.reject");
+      this.emitLootState();
+      this.showLoadoutMessage(`${item.name}：${reason}`);
+      return;
+    }
+    if (result.value === previousLoadout) return;
+
+    this.loadout = result.value;
+    this.pendingDiscard = undefined;
+    this.game.events.emit("audio:event", "inventory.item.place");
+    this.emitLootState();
+    this.showLoadoutMessage(
+      `已将 ${item.name} 放入${payload.target === "rig" ? "胸挂" : "背包"}指定格位`,
+    );
+    this.emitHudState();
+  }
+
   private handleLoadoutItemDiscard(payload: LoadoutItemPayload): void {
     if (!this.lootPanelOpen) return;
     const sourceContainer = this.loadout[payload.source];
@@ -1133,10 +1279,12 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     this.loadout = result.value.loadout;
+    const returnedItem = this.toReturnedLootItem(result.value.item);
     this.activeLootChest.loot = [
       ...this.activeLootChest.loot,
-      this.toReturnedLootItem(result.value.item),
+      returnedItem,
     ];
+    this.activeLootChest.revealedItemIds.add(returnedItem.id);
     this.pendingDiscard = undefined;
     this.game.events.emit("audio:event", "inventory.item.place");
     this.emitLootState();
@@ -1158,14 +1306,6 @@ export class GameScene extends Phaser.Scene {
       icon: item.icon ?? "pouch",
       tags: [...item.tags],
     };
-  }
-
-  private highestLootRarity(items: readonly LootItem[]): LootRarity {
-    const order: Record<LootRarity, number> = { common: 0, magic: 1, rare: 2, red: 3 };
-    return items.reduce<LootRarity>(
-      (highest, item) => (order[item.rarity] > order[highest] ? item.rarity : highest),
-      "common",
-    );
   }
 
   private showLoadoutMessage(message: string): void {
@@ -1236,13 +1376,7 @@ export class GameScene extends Phaser.Scene {
       attack: Phaser.Input.Keyboard.KeyCodes.SPACE,
       roll: Phaser.Input.Keyboard.KeyCodes.SHIFT,
       interact: Phaser.Input.Keyboard.KeyCodes.E,
-      close: Phaser.Input.Keyboard.KeyCodes.ESC,
       restart: Phaser.Input.Keyboard.KeyCodes.R,
-      slot1: Phaser.Input.Keyboard.KeyCodes.ONE,
-      slot2: Phaser.Input.Keyboard.KeyCodes.TWO,
-      slot3: Phaser.Input.Keyboard.KeyCodes.THREE,
-      slot4: Phaser.Input.Keyboard.KeyCodes.FOUR,
-      slot5: Phaser.Input.Keyboard.KeyCodes.FIVE,
     }) as ControlKeys;
     this.input.keyboard!.addCapture([
       Phaser.Input.Keyboard.KeyCodes.SPACE,
@@ -1251,6 +1385,7 @@ export class GameScene extends Phaser.Scene {
       Phaser.Input.Keyboard.KeyCodes.LEFT,
       Phaser.Input.Keyboard.KeyCodes.RIGHT,
     ]);
+    this.input.keyboard!.on("keydown", this.handlePanelKeyDown, this);
     this.game.events.on("input:inventory-toggle", this.handleInventoryShortcut, this);
     this.input.on(Phaser.Input.Events.POINTER_DOWN, this.handlePointerAttack, this);
   }
@@ -1261,16 +1396,27 @@ export class GameScene extends Phaser.Scene {
     else this.openInventoryPanel();
   }
 
-  private pressedLootSlotIndex(): number | undefined {
-    const keys = [
-      this.controls.slot1,
-      this.controls.slot2,
-      this.controls.slot3,
-      this.controls.slot4,
-      this.controls.slot5,
-    ];
-    const index = keys.findIndex((key) => Phaser.Input.Keyboard.JustDown(key));
-    return index >= 0 ? index : undefined;
+  private handlePanelKeyDown(event: KeyboardEvent): void {
+    if (event.repeat || this.runState !== "playing") return;
+    if (this.extractionPanelOpen) {
+      if (event.code === "Digit1" || event.code === "Numpad1") this.handleExtractionChoice("normal");
+      else if (event.code === "Digit2" || event.code === "Numpad2") this.handleExtractionChoice("drop_pack");
+      else if (event.code === "Escape") this.closeExtractionPanel();
+      return;
+    }
+    if (!this.lootPanelOpen) return;
+    if (event.code === "Escape" || event.code === "KeyE") {
+      if (event.code === "KeyE") this.searchRequiresRelease = true;
+      this.closeLootPanel();
+      return;
+    }
+    const slotCodes = ["Digit1", "Digit2", "Digit3", "Digit4", "Digit5"];
+    const numpadCodes = ["Numpad1", "Numpad2", "Numpad3", "Numpad4", "Numpad5"];
+    const slotIndex = Math.max(slotCodes.indexOf(event.code), numpadCodes.indexOf(event.code));
+    const slottedItem = slotIndex < 0 ? undefined : this.activeLootChest?.loot[slotIndex];
+    if (slottedItem && this.activeLootChest) {
+      this.handleLootTake({ chestId: this.activeLootChest.id, itemId: slottedItem.id });
+    }
   }
 
   private updateFacing(): void {
@@ -1330,6 +1476,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private handlePointerAttack(pointer: Phaser.Input.Pointer): void {
+    if (this.lootPanelOpen || this.extractionPanelOpen) return;
     if (pointer.leftButtonDown()) this.performAttack(this.time.now);
   }
 

@@ -2,9 +2,11 @@ import Phaser from "phaser";
 import {
   containerCapacity,
   containerUsedCells,
+  moveStoredItemToPosition,
   rotatedSize,
   type ContainerState,
   type ItemInstance,
+  type StoredContainerSlot,
 } from "../domain/loadout";
 import type {
   ExtractionOutcomeUi,
@@ -42,7 +44,17 @@ const DEFAULT_PROFILE_SUMMARY: ProfileSummaryUi = {
   status: "new",
 };
 
-const LOOT_HINT = "数字 1–5 拾取 · 点击转移 / 换装 · Shift+点击旋转 · 右键两次退回 · Tab / Esc 关闭";
+const LOOT_HINT = "数字1–5拾取 · 拖动指定格位 · 点击自动转移 · Shift+点击旋转 · 右键退回 · E/Tab/Esc关闭";
+
+interface LoadoutDropZone {
+  container: StoredContainerSlot;
+  pocketId: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  cell: number;
+}
 
 export class HudScene extends Phaser.Scene {
   private hudState: HudState = { ...DEFAULT_HUD };
@@ -60,6 +72,10 @@ export class HudScene extends Phaser.Scene {
   private lootTitle!: Phaser.GameObjects.Text;
   private lootHint!: Phaser.GameObjects.Text;
   private lootObjects: Phaser.GameObjects.GameObject[] = [];
+  private loadoutDropZones: LoadoutDropZone[] = [];
+  private lootSearchProgressItemId?: string;
+  private lootSearchProgressFill?: Phaser.GameObjects.Rectangle;
+  private lootSearchProgressText?: Phaser.GameObjects.Text;
   private lootMessageVersion = 0;
   private extractionGraphics!: Phaser.GameObjects.Graphics;
   private extractionObjects: Phaser.GameObjects.GameObject[] = [];
@@ -74,6 +90,7 @@ export class HudScene extends Phaser.Scene {
 
   create(): void {
     this.input.mouse?.disableContextMenu();
+    this.input.dragDistanceThreshold = 9;
     this.statusGraphics = this.add.graphics();
     this.minimapGraphics = this.add.graphics();
     this.lootGraphics = this.add.graphics().setDepth(100);
@@ -194,6 +211,7 @@ export class HudScene extends Phaser.Scene {
     this.game.events.on("hud:reset", this.handleReset, this);
     this.game.events.on("loot:state", this.handleLootState, this);
     this.game.events.on("loot:message", this.handleLootMessage, this);
+    this.game.events.on("loot:search-progress", this.handleLootSearchProgress, this);
     this.game.events.on("extraction:state", this.handleExtractionState, this);
     this.game.events.on("extraction:result", this.handleExtractionResult, this);
     this.game.events.on("profile:state", this.handleProfileState, this);
@@ -405,13 +423,22 @@ export class HudScene extends Phaser.Scene {
 
     this.lootTitle.setText(state.chestId ? `${state.chestName ?? "宝箱"} · 搜刮` : "行囊整理").setVisible(true);
     this.lootHint.setText(LOOT_HINT).setColor("#aeb9bc").setVisible(true);
+    const revealedItemIds = new Set(state.revealedItemIds ?? []);
+    const unknownItemCount = state.chestItems.filter((item) => !revealedItemIds.has(item.id)).length;
 
     const leftHeading = this.add
-      .text(132, 150, state.chestId ? `箱内物品  ${state.chestItems.length}` : "当前没有打开的容器", {
+      .text(
+        132,
+        150,
+        state.chestId
+          ? `箱内物品 ${state.chestItems.length}${unknownItemCount > 0 ? ` · 未搜索 ${unknownItemCount}` : " · 已全部识别"}`
+          : "当前没有打开的容器",
+        {
         fontFamily: "Microsoft YaHei, sans-serif",
         fontSize: "18px",
         color: "#d8dedf",
-      })
+        },
+      )
       .setDepth(102);
     const rightHeading = this.add
       .text(474, 150, "出战负载", {
@@ -425,7 +452,16 @@ export class HudScene extends Phaser.Scene {
     state.chestItems.slice(0, 5).forEach((item, index) => {
       const x = 132;
       const y = 190 + index * 76;
-      this.createChestItemCard(item, state.chestId!, x, y, index + 1);
+      this.createChestItemCard(
+        item,
+        state.chestId!,
+        x,
+        y,
+        index + 1,
+        revealedItemIds.has(item.id),
+        state.searchingItemId === item.id,
+        state.searchingItemId === item.id ? state.searchProgress ?? 0 : 0,
+      );
     });
     if (state.chestItems.length > 5) {
       const overflow = this.add
@@ -438,7 +474,7 @@ export class HudScene extends Phaser.Scene {
       this.lootObjects.push(overflow);
     }
 
-    this.drawLoadout(state.loadout);
+    this.drawLoadout(state.loadout, !state.searchingItemId);
   }
 
   private handleLootMessage(message: string): void {
@@ -451,40 +487,100 @@ export class HudScene extends Phaser.Scene {
     });
   }
 
-  private createChestItemCard(item: LootItem, chestId: string, x: number, y: number, slotNumber: number): void {
-    const color = this.rarityColor(item.rarity);
+  private createChestItemCard(
+    item: LootItem,
+    chestId: string,
+    x: number,
+    y: number,
+    slotNumber: number,
+    revealed: boolean,
+    searching: boolean,
+    searchProgress: number,
+  ): void {
+    const color = revealed ? this.rarityColor(item.rarity) : searching ? 0xa58d68 : 0x465158;
     const card = this.add
-      .rectangle(x, y, 276, 64, 0x172027, 1)
+      .rectangle(x, y, 276, 64, revealed ? 0x172027 : 0x050709, 1)
       .setOrigin(0)
       .setStrokeStyle(2, color, 0.9)
       .setDepth(102)
       .setInteractive({ useHandCursor: true });
-    card.on(Phaser.Input.Events.POINTER_OVER, () => card.setFillStyle(0x253139, 1));
-    card.on(Phaser.Input.Events.POINTER_OUT, () => card.setFillStyle(0x172027, 1));
+    card.on(Phaser.Input.Events.POINTER_OVER, () => card.setFillStyle(revealed ? 0x253139 : 0x101519, 1));
+    card.on(Phaser.Input.Events.POINTER_OUT, () => card.setFillStyle(revealed ? 0x172027 : 0x050709, 1));
     card.on(Phaser.Input.Events.POINTER_DOWN, () => {
       this.game.events.emit("loot:take", { chestId, itemId: item.id });
     });
     const icon = this.add.graphics().setDepth(103);
-    this.drawLootIcon(icon, item, x + 32, y + 32, 0.58);
+    if (revealed) this.drawLootIcon(icon, item, x + 32, y + 32, 0.58);
+    else this.drawUnknownLootIcon(icon, item, x + 32, y + 32, searching);
     const name = this.add
-      .text(x + 62, y + 9, `${slotNumber}. ${item.name}`, {
+      .text(x + 62, y + 9, `${slotNumber}. ${revealed ? item.name : "未知物品"}`, {
         fontFamily: "Microsoft YaHei, sans-serif",
         fontSize: "16px",
         fontStyle: "bold",
-        color: "#edf1f1",
+        color: revealed ? "#edf1f1" : "#9aa4a8",
       })
       .setDepth(103);
     const detail = this.add
-      .text(x + 62, y + 35, `${item.width}×${item.height} · 价值 ${item.value}`, {
+      .text(
+        x + 62,
+        y + 35,
+        revealed
+          ? `${item.width}×${item.height} · 价值 ${item.value}`
+          : searching
+            ? `${item.width}×${item.height} · 搜索中 ${Math.round(searchProgress * 100)}%`
+            : `${item.width}×${item.height} · 点击或按 ${slotNumber} 搜索`,
+        {
         fontFamily: "Microsoft YaHei, sans-serif",
         fontSize: "14px",
-        color: this.rarityTextColor(item.rarity),
-      })
+        color: revealed ? this.rarityTextColor(item.rarity) : searching ? "#d5b982" : "#6f7b80",
+        },
+      )
       .setDepth(103);
+    if (searching) {
+      const progressBack = this.add.rectangle(x + 2, y + 59, 272, 3, 0x242d32, 1).setOrigin(0).setDepth(103);
+      const progressFill = this.add
+        .rectangle(x + 2, y + 59, 272 * Phaser.Math.Clamp(searchProgress, 0, 1), 3, 0xd69a48, 1)
+        .setOrigin(0)
+        .setDepth(104);
+      this.lootSearchProgressItemId = item.id;
+      this.lootSearchProgressFill = progressFill;
+      this.lootSearchProgressText = detail;
+      this.lootObjects.push(progressBack, progressFill);
+    }
     this.lootObjects.push(card, icon, name, detail);
   }
 
-  private drawLoadout(loadout: NonNullable<LootUiState["loadout"]>): void {
+  private drawUnknownLootIcon(
+    graphics: Phaser.GameObjects.Graphics,
+    item: LootItem,
+    centerX: number,
+    centerY: number,
+    searching: boolean,
+  ): void {
+    const scale = Math.min(1, 34 / Math.max(item.width, item.height));
+    const width = Math.max(14, item.width * 14 * scale);
+    const height = Math.max(14, item.height * 14 * scale);
+    graphics.fillStyle(0x020304, 0.96).fillRoundedRect(centerX - width / 2, centerY - height / 2, width, height, 4);
+    graphics.lineStyle(2, searching ? 0xa58d68 : 0x465158, 0.95);
+    graphics.strokeRoundedRect(centerX - width / 2, centerY - height / 2, width, height, 4);
+    graphics.lineStyle(1, 0x182127, 0.8);
+    graphics.lineBetween(centerX - width / 3, centerY + height / 3, centerX + width / 3, centerY - height / 3);
+    graphics.lineBetween(centerX - width / 3, centerY, centerX, centerY - height / 3);
+  }
+
+  private handleLootSearchProgress(payload: { itemId: string; progress: number }): void {
+    if (
+      payload.itemId !== this.lootSearchProgressItemId
+      || !this.lootSearchProgressFill
+      || !this.lootSearchProgressText
+    ) return;
+    const progress = Phaser.Math.Clamp(payload.progress, 0, 1);
+    this.lootSearchProgressFill.displayWidth = 272 * progress;
+    const sizePrefix = this.lootSearchProgressText.text.split(" · ")[0];
+    this.lootSearchProgressText.setText(`${sizePrefix} · 搜索中 ${Math.round(progress * 100)}%`);
+  }
+
+  private drawLoadout(loadout: NonNullable<LootUiState["loadout"]>, dragEnabled: boolean): void {
     this.lootGraphics.fillStyle(0x0b1115, 1).fillRoundedRect(474, 184, 672, 66, 10);
     this.lootGraphics.lineStyle(1, 0x344148, 0.9).strokeRoundedRect(474, 184, 672, 66, 10);
     const weaponLabel = this.add
@@ -521,20 +617,24 @@ export class HudScene extends Phaser.Scene {
       this.lootObjects.push(weaponIcon);
     }
 
-    this.drawContainer(loadout.rig, 474, 282, 302, 280, "胸挂");
+    this.drawContainer(loadout, loadout.rig, 474, 282, 302, 280, "胸挂", dragEnabled);
     if (loadout.backpack) {
-      this.drawContainer(loadout.backpack, 800, 282, 346, 280, "背包");
+      this.drawContainer(loadout, loadout.backpack, 800, 282, 346, 280, "背包", dragEnabled);
     }
   }
 
   private drawContainer(
+    loadout: NonNullable<LootUiState["loadout"]>,
     container: ContainerState,
     originX: number,
     originY: number,
     maxWidth: number,
     maxHeight: number,
     roleLabel: string,
+    dragEnabled: boolean,
   ): void {
+    if (container.kind !== "rig" && container.kind !== "backpack") return;
+    const containerSlot = container.kind;
     const bounds = container.pockets.reduce(
       (current, pocket) => ({
         width: Math.max(current.width, pocket.definition.offsetX + pocket.definition.width),
@@ -563,6 +663,15 @@ export class HudScene extends Phaser.Scene {
     for (const pocket of container.pockets) {
       const pocketX = originX + pocket.definition.offsetX * cell;
       const pocketY = originY + pocket.definition.offsetY * cell;
+      this.loadoutDropZones.push({
+        container: containerSlot,
+        pocketId: pocket.definition.id,
+        x: pocketX,
+        y: pocketY,
+        width: pocket.definition.width,
+        height: pocket.definition.height,
+        cell,
+      });
       for (let y = 0; y < pocket.definition.height; y += 1) {
         for (let x = 0; x < pocket.definition.width; x += 1) {
           if (pocket.definition.mask && pocket.definition.mask[y]?.[x] !== true) continue;
@@ -588,26 +697,115 @@ export class HudScene extends Phaser.Scene {
           .setOrigin(0)
           .setDepth(104)
           .setInteractive({ useHandCursor: true });
-        hitArea.on(Phaser.Input.Events.POINTER_OVER, () => hitArea.setStrokeStyle(2, 0xf0e4d2, 0.55));
-        hitArea.on(Phaser.Input.Events.POINTER_OUT, () => hitArea.setStrokeStyle());
+        this.input.setDraggable(hitArea, dragEnabled);
+        let pressX = 0;
+        let pressY = 0;
+        let grabCellX = 0;
+        let grabCellY = 0;
+        let dragged = false;
+        let modifiedAction = false;
+        hitArea.on(Phaser.Input.Events.POINTER_OVER, () => {
+          if (!dragged) hitArea.setStrokeStyle(2, 0xf0e4d2, 0.55);
+        });
+        hitArea.on(Phaser.Input.Events.POINTER_OUT, () => {
+          if (!dragged) hitArea.setStrokeStyle();
+        });
         hitArea.on(Phaser.Input.Events.POINTER_DOWN, (pointer: Phaser.Input.Pointer) => {
-          if (container.kind === "rig" || container.kind === "backpack") {
-            const payload = {
-              source: container.kind,
-              itemId: placement.item.id,
-            };
-            if (pointer.rightButtonDown()) {
-              this.game.events.emit("loadout:item-discard", payload);
-            } else if ((pointer.event as MouseEvent).shiftKey) {
-              this.game.events.emit("loadout:item-rotate", payload);
-            } else {
-              this.game.events.emit("loadout:item-action", payload);
-            }
+          pressX = pointer.x;
+          pressY = pointer.y;
+          dragged = false;
+          const shiftKey = Boolean((pointer.event as MouseEvent).shiftKey);
+          modifiedAction = pointer.rightButtonDown() || shiftKey;
+          const payload = { source: containerSlot, itemId: placement.item.id };
+          if (pointer.rightButtonDown()) {
+            this.game.events.emit("loadout:item-discard", payload);
+          } else if (shiftKey) {
+            this.game.events.emit("loadout:item-rotate", payload);
           }
+        });
+        hitArea.on(Phaser.Input.Events.POINTER_UP, (pointer: Phaser.Input.Pointer) => {
+          const distance = Phaser.Math.Distance.Between(pressX, pressY, pointer.x, pointer.y);
+          if (!modifiedAction && !dragged && distance < 9) {
+            this.game.events.emit("loadout:item-action", {
+              source: containerSlot,
+              itemId: placement.item.id,
+            });
+          }
+        });
+        hitArea.on(Phaser.Input.Events.DRAG_START, (_pointer: Phaser.Input.Pointer) => {
+          if (modifiedAction || !dragEnabled) return;
+          dragged = true;
+          grabCellX = Phaser.Math.Clamp(Math.floor((pressX - x) / cell), 0, size.width - 1);
+          grabCellY = Phaser.Math.Clamp(Math.floor((pressY - y) / cell), 0, size.height - 1);
+          hitArea.setDepth(130).setFillStyle(this.rarityColor(rarity), 0.25);
+          this.game.events.emit("loadout:drag-state", true);
+        });
+        hitArea.on(
+          Phaser.Input.Events.DRAG,
+          (pointer: Phaser.Input.Pointer, dragX: number, dragY: number) => {
+            if (!dragged) return;
+            if (this.input.manager.pointers.filter((activePointer) => activePointer.isDown).length > 1) {
+              hitArea.setPosition(x, y).setDepth(104).setFillStyle(0xffffff, 0.001).setStrokeStyle();
+              dragged = false;
+              this.game.events.emit("loadout:drag-state", false);
+              return;
+            }
+            hitArea.setPosition(dragX, dragY);
+            const destination = this.resolveLoadoutDrop(pointer.x, pointer.y, grabCellX, grabCellY);
+            const preview = destination
+              ? moveStoredItemToPosition(
+                  loadout,
+                  placement.item.id,
+                  containerSlot,
+                  destination.container,
+                  destination.pocketId,
+                  destination.x,
+                  destination.y,
+                )
+              : undefined;
+            hitArea.setStrokeStyle(3, preview?.ok ? 0x62d48c : 0xd7675f, 0.95);
+          },
+        );
+        hitArea.on(Phaser.Input.Events.DRAG_END, (pointer: Phaser.Input.Pointer) => {
+          if (!dragged) return;
+          const destination = this.resolveLoadoutDrop(pointer.x, pointer.y, grabCellX, grabCellY);
+          const cancelled = pointer.event?.type === "touchcancel" || pointer.event?.type === "pointercancel";
+          hitArea.setPosition(x, y).setDepth(104).setFillStyle(0xffffff, 0.001).setStrokeStyle();
+          dragged = false;
+          this.game.events.emit("loadout:drag-state", false);
+          if (cancelled || !destination) return;
+          this.game.events.emit("loadout:item-drop", {
+            source: containerSlot,
+            itemId: placement.item.id,
+            target: destination.container,
+            pocketId: destination.pocketId,
+            x: destination.x,
+            y: destination.y,
+          });
         });
         this.lootObjects.push(icon, hitArea);
       }
     }
+  }
+
+  private resolveLoadoutDrop(
+    pointerX: number,
+    pointerY: number,
+    grabCellX: number,
+    grabCellY: number,
+  ): (LoadoutDropZone & { x: number; y: number }) | undefined {
+    const zone = this.loadoutDropZones.find((candidate) =>
+      pointerX >= candidate.x
+      && pointerX < candidate.x + candidate.width * candidate.cell
+      && pointerY >= candidate.y
+      && pointerY < candidate.y + candidate.height * candidate.cell,
+    );
+    if (!zone) return undefined;
+    return {
+      ...zone,
+      x: Math.floor((pointerX - zone.x) / zone.cell) - grabCellX,
+      y: Math.floor((pointerY - zone.y) / zone.cell) - grabCellY,
+    };
   }
 
   private drawLootIcon(
@@ -720,6 +918,10 @@ export class HudScene extends Phaser.Scene {
   private clearLootObjects(): void {
     this.lootObjects.forEach((object) => object.destroy());
     this.lootObjects = [];
+    this.loadoutDropZones = [];
+    this.lootSearchProgressItemId = undefined;
+    this.lootSearchProgressFill = undefined;
+    this.lootSearchProgressText = undefined;
   }
 
   private renderStatus(): void {
@@ -846,6 +1048,7 @@ export class HudScene extends Phaser.Scene {
     this.game.events.off("hud:reset", this.handleReset, this);
     this.game.events.off("loot:state", this.handleLootState, this);
     this.game.events.off("loot:message", this.handleLootMessage, this);
+    this.game.events.off("loot:search-progress", this.handleLootSearchProgress, this);
     this.game.events.off("extraction:state", this.handleExtractionState, this);
     this.game.events.off("extraction:result", this.handleExtractionResult, this);
     this.game.events.off("profile:state", this.handleProfileState, this);

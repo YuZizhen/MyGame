@@ -56,6 +56,15 @@ function rarityFor(type: ChestType, roll: number): LootRarity {
   return "common";
 }
 
+export function lootRevealDuration(rarity: LootRarity): number {
+  return {
+    common: 450,
+    magic: 750,
+    rare: 1100,
+    red: 1600,
+  }[rarity];
+}
+
 export function generateChestLoot(chestId: string, type: ChestType, seed: number): LootItem[] {
   const itemCount = type === "boss" ? 5 : type === "reliquary" ? 4 : 3;
   const items: LootItem[] = [];
