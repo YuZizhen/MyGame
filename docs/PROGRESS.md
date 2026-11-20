@@ -42,6 +42,7 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - [x] Added atomic pointer drag-and-drop to exact rig/backpack pocket cells with valid/invalid previews.
 - [x] Fixed missed panel shortcuts and verified normal hold-to-open, mouse pickup, and `E`/`Esc` close flows.
 - [x] Added hidden chest silhouettes with rarity-scaled item searches, reveal light echoes, and rarity audio.
+- [x] Added bounded weapon damage, speed, critical chance, real combat effects, and current-weapon comparison.
 
 ## Active plan
 
@@ -59,7 +60,7 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 
 - [x] Add rotation, safe return, and cross-container movement.
 - [x] Add pointer drag-and-drop interactions.
-- [ ] Add item attributes and equipment comparison.
+- [x] Add item attributes and equipment comparison.
 - [ ] Split `GameScene` and `HudScene` responsibilities.
 - [x] Prevent enemy overlap and add chest collision.
 - [x] Skip unchanged fog redraws and gate minimap rendering by map-state revision.
@@ -77,7 +78,7 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 ## Known risks
 
 - `GameScene.ts` and `HudScene.ts` are oversized and should not absorb more domain logic.
-- Items do not expose enough combat attributes for meaningful equipment comparison.
+- Armor is intentionally still cargo-only; adding defense requires a separate balance pass.
 - The new GitHub Actions workflow has been checked locally but its first remote run has not yet been observed.
 - The production bundle still reports a Phaser-driven chunk-size warning.
 
@@ -102,10 +103,12 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 | 2026-11-20 | Accessibility | `npm run check` | Passed; 37 tests and production build |
 | 2026-11-20 | Accessibility | Headless Edge at `?qa=loot` and `?qa=extract` | Passed; numbered keyboard prompts render without clipping |
 | 2026-11-20 | Accessibility | Built HTML inspection | Passed; restrictive viewport flags absent and ARIA help/live regions present |
-| 2026-11-20 | Browser regression | `npm run test:e2e` | Passed; 4 Edge scenarios cover Tab focus, normal chest search, mouse/keyboard looting, drag-and-drop, panel close, live announcements, drop-pack extraction, and a touch-capture smoke check |
+| 2026-11-20 | Browser regression | `npm run test:e2e` | Passed; 5 Edge scenarios cover Tab focus, normal chest search, mouse/keyboard looting, drag-and-drop, weapon comparison, panel close, live announcements, drop-pack extraction, and a touch-capture smoke check |
 | 2026-11-20 | CI quality gate | Workflow inspection + `npm run check:full` | Passed locally; workflow installs Playwright Chromium before running the same quality gate |
 | 2026-11-20 | Loot identification | `npm run check` | Passed; 46 tests and production build |
 | 2026-11-20 | Loot identification | `npm run test:e2e` | Passed; hold-to-open, hidden reveal, second-action pickup, `E`/`Esc` close, drag, and extraction verified |
+| 2026-11-20 | Weapon attributes | `npm run check` | Passed; 54 tests and production build, including legacy/invalid profile validation |
+| 2026-11-20 | Weapon attributes | `npm run test:e2e` | Passed; revealed weapon comparison renders against the starter sword |
 
 ## Commits
 
@@ -120,4 +123,5 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - `ed26ac8` — `feat: add responsive synthesized game audio`
 - `41e9820` — `feat: improve keyboard and browser accessibility`
 - `4e4a5a9` — `ci: run full browser quality gate`
+- `fdd4636` — `feat: add searchable container interactions`
 

@@ -4,6 +4,7 @@ import {
   containerUsedCells,
   moveStoredItemToPosition,
   rotatedSize,
+  weaponDamagePerSecond,
   type ContainerState,
   type ItemInstance,
   type StoredContainerSlot,
@@ -411,6 +412,7 @@ export class HudScene extends Phaser.Scene {
     this.lootTitle.setVisible(false);
     this.lootHint.setVisible(false);
     if (!state.open || !state.loadout) return;
+    const loadout = state.loadout;
 
     this.lootGraphics.setVisible(true);
     this.lootGraphics.fillStyle(0x030506, 0.88).fillRect(0, 0, 1280, 720);
@@ -461,6 +463,7 @@ export class HudScene extends Phaser.Scene {
         revealedItemIds.has(item.id),
         state.searchingItemId === item.id,
         state.searchingItemId === item.id ? state.searchProgress ?? 0 : 0,
+        loadout.weapon,
       );
     });
     if (state.chestItems.length > 5) {
@@ -474,7 +477,7 @@ export class HudScene extends Phaser.Scene {
       this.lootObjects.push(overflow);
     }
 
-    this.drawLoadout(state.loadout, !state.searchingItemId);
+    this.drawLoadout(loadout, !state.searchingItemId);
   }
 
   private handleLootMessage(message: string): void {
@@ -496,6 +499,7 @@ export class HudScene extends Phaser.Scene {
     revealed: boolean,
     searching: boolean,
     searchProgress: number,
+    currentWeapon: ItemInstance | undefined,
   ): void {
     const color = revealed ? this.rarityColor(item.rarity) : searching ? 0xa58d68 : 0x465158;
     const card = this.add
@@ -525,14 +529,14 @@ export class HudScene extends Phaser.Scene {
         x + 62,
         y + 35,
         revealed
-          ? `${item.width}×${item.height} · 价值 ${item.value}`
+          ? this.lootItemDetail(item, currentWeapon)
           : searching
             ? `${item.width}×${item.height} · 搜索中 ${Math.round(searchProgress * 100)}%`
             : `${item.width}×${item.height} · 点击或按 ${slotNumber} 搜索`,
         {
         fontFamily: "Microsoft YaHei, sans-serif",
-        fontSize: "14px",
-        color: revealed ? this.rarityTextColor(item.rarity) : searching ? "#d5b982" : "#6f7b80",
+        fontSize: revealed && item.weaponStats ? "12px" : "14px",
+        color: revealed ? this.lootItemDetailColor(item, currentWeapon) : searching ? "#d5b982" : "#6f7b80",
         },
       )
       .setDepth(103);
@@ -548,6 +552,29 @@ export class HudScene extends Phaser.Scene {
       this.lootObjects.push(progressBack, progressFill);
     }
     this.lootObjects.push(card, icon, name, detail);
+  }
+
+  private lootItemDetail(item: LootItem, currentWeapon: ItemInstance | undefined): string {
+    if (!item.weaponStats) {
+      const suffix = item.tags.includes("armor") ? " · 战利品" : "";
+      return `${item.width}×${item.height} · 价值 ${item.value}${suffix}`;
+    }
+    const attacksPerSecond = 1000 / item.weaponStats.attackIntervalMs;
+    const candidateDps = weaponDamagePerSecond(item);
+    const currentDps = currentWeapon ? weaponDamagePerSecond(currentWeapon) : undefined;
+    const delta = candidateDps !== undefined && currentDps
+      ? Math.round(((candidateDps / currentDps) - 1) * 100)
+      : undefined;
+    const comparison = delta === undefined ? "未装备武器" : delta === 0 ? "— 持平" : `${delta > 0 ? "↑" : "↓"}${Math.abs(delta)}%`;
+    return `伤${item.weaponStats.damage} · 攻${attacksPerSecond.toFixed(2)}/s · 暴${Math.round(item.weaponStats.critChance * 100)}%\n${item.width}×${item.height} · 预计 ${comparison}`;
+  }
+
+  private lootItemDetailColor(item: LootItem, currentWeapon: ItemInstance | undefined): string {
+    const candidateDps = weaponDamagePerSecond(item);
+    const currentDps = currentWeapon ? weaponDamagePerSecond(currentWeapon) : undefined;
+    if (candidateDps === undefined || currentDps === undefined) return this.rarityTextColor(item.rarity);
+    if (Math.abs(candidateDps - currentDps) < 0.05) return "#879397";
+    return candidateDps > currentDps ? "#69c58f" : "#d87972";
   }
 
   private drawUnknownLootIcon(
@@ -598,6 +625,21 @@ export class HudScene extends Phaser.Scene {
         color: "#e7ecec",
       })
       .setDepth(103);
+    const weaponStats = loadout.weapon?.weaponStats;
+    const weaponStatsText = this.add
+      .text(
+        574,
+        221,
+        weaponStats
+          ? `伤害 ${weaponStats.damage} · 攻击 ${((1000 / weaponStats.attackIntervalMs)).toFixed(2)}/秒 · 暴击 ${Math.round(weaponStats.critChance * 100)}% · DPS ${weaponDamagePerSecond(loadout.weapon!)?.toFixed(1)}`
+          : "当前武器没有战斗属性",
+        {
+          fontFamily: "Microsoft YaHei, sans-serif",
+          fontSize: "13px",
+          color: "#96a3a7",
+        },
+      )
+      .setDepth(103);
     const weaponButton = this.add
       .rectangle(474, 184, 672, 66, 0xffffff, 0.001)
       .setOrigin(0)
@@ -610,7 +652,7 @@ export class HudScene extends Phaser.Scene {
         this.game.events.emit("loadout:item-action", { source: "weapon", itemId: loadout.weapon.id });
       }
     });
-    this.lootObjects.push(weaponLabel, weaponName, weaponButton);
+    this.lootObjects.push(weaponLabel, weaponName, weaponStatsText, weaponButton);
     if (loadout.weapon) {
       const weaponIcon = this.add.graphics().setDepth(103);
       this.drawLootIcon(weaponIcon, loadout.weapon, 548, 218, 0.5);

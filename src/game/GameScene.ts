@@ -19,6 +19,7 @@ import {
   type ItemInstance,
   type LoadoutState,
   type StoredContainerSlot,
+  type WeaponStats,
 } from "../domain/loadout";
 import {
   commitExtraction,
@@ -49,6 +50,7 @@ const PLAYER_SPEED = 180;
 const PLAYER_MAX_HP = 100;
 const DEFAULT_VISION_RADIUS = 8;
 const BOSS_VISION_RADIUS = 13;
+const STARTER_WEAPON_STATS: WeaponStats = { damage: 30, attackIntervalMs: 480, critChance: 0 };
 
 type MobKind = "scavenger" | "stalker" | "brute" | "boss";
 
@@ -411,6 +413,7 @@ export class GameScene extends Phaser.Scene {
         corruption: 0,
         rarity: "common",
         icon: "blade",
+        weaponStats: { ...STARTER_WEAPON_STATS },
       },
       rig: createEmptyContainer(ASSAULT_RIG, "equipped_assault_rig"),
       backpack: createEmptyContainer(EXPEDITION_BACKPACK, "equipped_expedition_backpack"),
@@ -1305,6 +1308,7 @@ export class GameScene extends Phaser.Scene {
       value: item.value,
       icon: item.icon ?? "pouch",
       tags: [...item.tags],
+      weaponStats: item.weaponStats ? { ...item.weaponStats } : undefined,
     };
   }
 
@@ -1326,6 +1330,7 @@ export class GameScene extends Phaser.Scene {
       corruption,
       rarity: item.rarity,
       icon: item.icon,
+      weaponStats: item.weaponStats ? { ...item.weaponStats } : undefined,
     };
   }
 
@@ -1469,7 +1474,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     if (input.lengthSq() > 0) input.normalize();
-    const attackSlowdown = time < this.attackReadyAt - 260 ? 0.45 : 1;
+    const attackSlowdown = time < this.attackReadyAt - this.currentWeaponStats().attackIntervalMs * 0.54 ? 0.45 : 1;
     this.player.setVelocity(input.x * PLAYER_SPEED * attackSlowdown, input.y * PLAYER_SPEED * attackSlowdown);
 
     if (Phaser.Input.Keyboard.JustDown(this.controls.attack)) this.performAttack(time);
@@ -1482,7 +1487,8 @@ export class GameScene extends Phaser.Scene {
 
   private performAttack(time: number): void {
     if (this.runState !== "playing" || time < this.attackReadyAt || time < this.controlLockedUntil) return;
-    this.attackReadyAt = time + 480;
+    const weaponStats = this.currentWeaponStats();
+    this.attackReadyAt = time + weaponStats.attackIntervalMs;
     this.game.events.emit("audio:event", "player.melee.swing");
 
     const range = 112;
@@ -1511,7 +1517,9 @@ export class GameScene extends Phaser.Scene {
       const targetAngle = Phaser.Math.Angle.Between(this.player.x, this.player.y, mob.sprite.x, mob.sprite.y);
       const difference = Math.abs(Phaser.Math.Angle.Wrap(targetAngle - this.facing));
       if (difference > halfArc) continue;
-      this.damageMob(mob, mob.isBoss ? 25 : 30);
+      const critical = Math.random() < weaponStats.critChance;
+      const baseDamage = mob.isBoss ? weaponStats.damage * (5 / 6) : weaponStats.damage;
+      this.damageMob(mob, Math.round(baseDamage * (critical ? 1.5 : 1)), critical);
       hits += 1;
     }
 
@@ -1521,14 +1529,18 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private damageMob(mob: MobState, amount: number): void {
+  private currentWeaponStats(): WeaponStats {
+    return this.loadout.weapon?.weaponStats ?? STARTER_WEAPON_STATS;
+  }
+
+  private damageMob(mob: MobState, amount: number, critical = false): void {
     if (mob.dead) return;
     mob.hp = Math.max(0, mob.hp - amount);
-    mob.sprite.setTint(0xffe1b0);
+    mob.sprite.setTint(critical ? 0xfff2a8 : 0xffe1b0);
     this.time.delayedCall(85, () => {
       if (mob.sprite.active) mob.sprite.clearTint();
     });
-    this.showFloatingText(mob.sprite.x, mob.sprite.y - 34, String(amount), "#f1c37b");
+    this.showFloatingText(mob.sprite.x, mob.sprite.y - 34, critical ? `${amount}!` : String(amount), critical ? "#fff0a2" : "#f1c37b");
 
     if (mob.hp <= 0) this.killMob(mob);
   }

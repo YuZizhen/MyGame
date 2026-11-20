@@ -244,6 +244,24 @@ try {
     dragSetup.itemId,
   );
 
+  await page.goto(`${BASE_URL}/?qa=loot`);
+  await page.waitForFunction(() => window.__ASHEN_GAME__?.scene?.getScene("GameScene")?.lootPanelOpen === true);
+  await page.evaluate(() => {
+    const scene = window.__ASHEN_GAME__.scene.getScene("GameScene");
+    const item = scene.activeLootChest.loot[0];
+    Object.assign(item, {
+      name: "试作锋刃",
+      tags: ["weapon", "valuable"],
+      weaponStats: { damage: 36, attackIntervalMs: 450, critChance: 0.04 },
+    });
+    scene.activeLootChest.revealedItemIds.add(item.id);
+    scene.emitLootState();
+  });
+  await page.waitForFunction(() => {
+    const hud = window.__ASHEN_GAME__.scene.getScene("HudScene");
+    return hud.lootObjects.some((object) => typeof object.text === "string" && object.text.includes("预计 ↑"));
+  });
+
   await page.goto(`${BASE_URL}/?qa=extract`);
   await page.waitForFunction(() => window.__ASHEN_GAME__?.scene?.getScene("GameScene")?.extractionPanelOpen === true);
   await page.keyboard.press("2");
@@ -261,7 +279,7 @@ try {
   assert(runtimeErrors.length === 0, `Browser runtime errors: ${runtimeErrors.join(" | ")}`);
 
   await context.close();
-  process.stdout.write("Browser regression: 4 scenarios passed\n");
+  process.stdout.write("Browser regression: 5 scenarios passed\n");
 } finally {
   try {
     if (browser) await browser.close();

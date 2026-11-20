@@ -14,6 +14,12 @@ export type ExtractionMode = "normal" | "drop_pack";
 export type ItemRarity = "common" | "magic" | "rare" | "red";
 export type ItemIcon = "gem" | "pouch" | "ring" | "blade" | "scroll" | "helm" | "axe" | "armor" | "relic";
 
+export interface WeaponStats {
+  damage: number;
+  attackIntervalMs: number;
+  critChance: number;
+}
+
 export interface ItemInstance {
   id: string;
   definitionId: string;
@@ -25,6 +31,7 @@ export interface ItemInstance {
   corruption: number;
   rarity?: ItemRarity;
   icon?: ItemIcon;
+  weaponStats?: WeaponStats;
 }
 
 export interface PocketDefinition {
@@ -163,6 +170,12 @@ export function rotatedSize(item: ItemInstance, rotated: boolean): { width: numb
   return rotated
     ? { width: item.height, height: item.width }
     : { width: item.width, height: item.height };
+}
+
+export function weaponDamagePerSecond(item: Pick<ItemInstance, "weaponStats">): number | undefined {
+  const stats = item.weaponStats;
+  if (!stats || stats.attackIntervalMs <= 0) return undefined;
+  return (stats.damage * (1 + stats.critChance * 0.5) * 1000) / stats.attackIntervalMs;
 }
 
 export function listContainerItems(container: ContainerState): readonly ItemInstance[] {
@@ -513,7 +526,11 @@ export function loadoutCorruption(loadout: LoadoutState): number {
 }
 
 function snapshotItem(item: ItemInstance): ItemInstance {
-  return { ...item, tags: [...item.tags] };
+  return {
+    ...item,
+    tags: [...item.tags],
+    weaponStats: item.weaponStats ? { ...item.weaponStats } : undefined,
+  };
 }
 
 function snapshotContainer(container: ContainerState): ContainerState {

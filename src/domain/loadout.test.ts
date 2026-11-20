@@ -21,6 +21,7 @@ import {
   settleExtraction,
   unequipWeaponToBackpack,
   validateLoadout,
+  weaponDamagePerSecond,
   type ItemInstance,
   type LoadoutState,
 } from "./loadout";
@@ -35,6 +36,7 @@ function item(overrides: Partial<ItemInstance> & Pick<ItemInstance, "id">): Item
     tags: overrides.tags ?? ["valuable"],
     value: overrides.value ?? 10,
     corruption: overrides.corruption ?? 0,
+    weaponStats: overrides.weaponStats,
   };
 }
 
@@ -187,6 +189,14 @@ describe("weapon slot", () => {
       expect(result.value.weapon).toBeUndefined();
       expect(result.value.backpack && listContainerItems(result.value.backpack)[0].id).toBe("sword");
     }
+  });
+
+  it("calculates expected weapon output including critical hits", () => {
+    const weapon = item({ id: "weapon", tags: ["weapon"] });
+    weapon.weaponStats = { damage: 30, attackIntervalMs: 500, critChance: 0.1 };
+
+    expect(weaponDamagePerSecond(weapon)).toBeCloseTo(63);
+    expect(weaponDamagePerSecond(item({ id: "valuable" }))).toBeUndefined();
   });
 });
 
@@ -416,7 +426,12 @@ describe("extraction settlement", () => {
     const rig = expectPlaced(placeItem(createEmptyContainer(ASSAULT_RIG, "rig-1"), "medicine", rigItem, 0, 0));
     const backpack = expectPlaced(placeItem(createEmptyContainer(EXPEDITION_BACKPACK, "bag-1"), "main", cargo, 0, 0));
     return {
-      weapon: item({ id: "sword", tags: ["weapon"], corruption: 0 }),
+      weapon: item({
+        id: "sword",
+        tags: ["weapon"],
+        corruption: 0,
+        weaponStats: { damage: 30, attackIntervalMs: 480, critChance: 0 },
+      }),
       rig,
       backpack,
     };
@@ -451,10 +466,12 @@ describe("extraction settlement", () => {
     (source.rig as { name: string }).name = "mutated rig";
     (source.backpack as { name: string }).name = "mutated backpack";
     (source.weapon as { name: string }).name = "mutated weapon";
+    source.weapon!.weaponStats!.damage = 99;
 
     expect(result.retained.rig.name).toBe("突击胸挂");
     expect(result.droppedBackpack?.name).toBe("远征背包");
     expect(result.retained.weapon?.name).toBe("sword");
+    expect(result.retained.weapon?.weaponStats?.damage).toBe(30);
   });
 });
 

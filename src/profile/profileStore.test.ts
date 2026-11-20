@@ -71,7 +71,11 @@ function populatedLoadout(): LoadoutState {
   );
   if (!rigPlacement.ok || !backpackPlacement.ok) throw new Error("fixture placement failed");
   return {
-    weapon: { ...item("sword", 20), tags: ["weapon"] },
+    weapon: {
+      ...item("sword", 20),
+      tags: ["weapon"],
+      weaponStats: { damage: 30, attackIntervalMs: 480, critChance: 0 },
+    },
     rig: rigPlacement.value,
     backpack: backpackPlacement.value,
   };
@@ -85,6 +89,34 @@ describe("profile persistence", () => {
     expect(saveProfile(storage, profile)).toBe(true);
     expect(storage.values.has(PROFILE_TEMP_KEY)).toBe(false);
     expect(loadProfile(storage)).toEqual({ profile, status: "loaded" });
+  });
+
+  it("loads legacy warehouse items without weapon stats", () => {
+    const storage = new MemoryStorage();
+    const profile = { ...createDefaultProfile(), warehouse: [item("legacy", 12)] };
+    storage.values.set(PROFILE_STORAGE_KEY, JSON.stringify(profile));
+
+    const result = loadProfile(storage);
+
+    expect(result.status).toBe("loaded");
+    expect(result.profile.warehouse[0].weaponStats).toBeUndefined();
+  });
+
+  it.each([
+    { damage: 0, attackIntervalMs: 480, critChance: 0 },
+    { damage: 30, attackIntervalMs: 0, critChance: 0 },
+    { damage: 30, attackIntervalMs: 480, critChance: -0.1 },
+    { damage: 30, attackIntervalMs: 480, critChance: 1.1 },
+  ])("rejects invalid persisted weapon stats %#", (weaponStats) => {
+    const storage = new MemoryStorage();
+    const invalid = JSON.stringify({
+      ...createDefaultProfile(),
+      warehouse: [{ ...item("invalid-weapon", 10), tags: ["weapon"], weaponStats }],
+    });
+    storage.values.set(PROFILE_STORAGE_KEY, invalid);
+
+    expect(loadProfile(storage).status).toBe("recovered");
+    expect(storage.values.get(PROFILE_CORRUPT_BACKUP_KEY)).toBe(invalid);
   });
 
   it("recovers a valid pending write when the primary value is corrupt", () => {
@@ -178,6 +210,15 @@ describe("extraction commits", () => {
       droppedValue: 0,
       retainedContainerIds: ["rig-1", "bag-1"],
     });
+  });
+
+  it("deeply snapshots weapon stats into the warehouse", () => {
+    const extraction = settleExtraction(populatedLoadout(), "normal");
+    const profile = applyExtraction(createDefaultProfile(), extraction, 100, "run-stats");
+
+    extraction.retained.weapon!.weaponStats!.damage = 99;
+
+    expect(profile.warehouse.find((entry) => entry.id === "sword")?.weaponStats?.damage).toBe(30);
   });
 
   it("does not store the dropped backpack cargo", () => {

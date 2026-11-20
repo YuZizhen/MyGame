@@ -79,6 +79,22 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === "string");
 }
 
+function isWeaponStats(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.damage === "number"
+    && Number.isFinite(value.damage)
+    && value.damage > 0
+    && typeof value.attackIntervalMs === "number"
+    && Number.isFinite(value.attackIntervalMs)
+    && value.attackIntervalMs > 0
+    && typeof value.critChance === "number"
+    && Number.isFinite(value.critChance)
+    && value.critChance >= 0
+    && value.critChance <= 1
+  );
+}
+
 function isItem(value: unknown): value is ItemInstance {
   if (!isRecord(value)) return false;
   return (
@@ -94,7 +110,8 @@ function isItem(value: unknown): value is ItemInstance {
     isFiniteNonNegative(value.value) &&
     isFiniteNonNegative(value.corruption) &&
     (value.rarity === undefined || (typeof value.rarity === "string" && ITEM_RARITIES.has(value.rarity))) &&
-    (value.icon === undefined || (typeof value.icon === "string" && ITEM_ICONS.has(value.icon)))
+    (value.icon === undefined || (typeof value.icon === "string" && ITEM_ICONS.has(value.icon))) &&
+    (value.weaponStats === undefined || isWeaponStats(value.weaponStats))
   );
 }
 
@@ -235,7 +252,11 @@ export function saveProfile(storage: StorageAdapter, profile: PlayerProfile): bo
 }
 
 function cloneItem(item: ItemInstance): ItemInstance {
-  return { ...item, tags: [...item.tags] };
+  return {
+    ...item,
+    tags: [...item.tags],
+    weaponStats: item.weaponStats ? { ...item.weaponStats } : undefined,
+  };
 }
 
 export function applyExtraction(

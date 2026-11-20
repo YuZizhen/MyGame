@@ -36,4 +36,13 @@ describe("generateChestLoot", () => {
     expect(durations).toEqual([450, 750, 1100, 1600]);
     expect(durations).toEqual([...durations].sort((left, right) => left - right));
   });
+
+  it("adds bounded combat stats only to weapon loot", () => {
+    const items = Array.from({ length: 80 }, (_, seed) => generateChestLoot(`loot_${seed}`, "hidden", seed)).flat();
+    const weapons = items.filter((item) => item.tags.includes("weapon"));
+    expect(weapons.length).toBeGreaterThan(0);
+    expect(weapons.every((item) => item.weaponStats !== undefined)).toBe(true);
+    expect(weapons.every((item) => item.weaponStats!.damage >= 30 && item.weaponStats!.damage <= 38)).toBe(true);
+    expect(items.filter((item) => !item.tags.includes("weapon")).every((item) => item.weaponStats === undefined)).toBe(true);
+  });
 });

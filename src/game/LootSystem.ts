@@ -1,4 +1,5 @@
 import type { ChestType, LootItem, LootRarity } from "./types";
+import type { WeaponStats } from "../domain/loadout";
 
 interface LootTemplate {
   id: string;
@@ -8,6 +9,7 @@ interface LootTemplate {
   baseValue: number;
   icon: LootItem["icon"];
   tags: LootItem["tags"];
+  weaponBase?: Pick<WeaponStats, "damage" | "attackIntervalMs">;
   forcedRarity?: LootRarity;
 }
 
@@ -18,10 +20,10 @@ const TEMPLATES: LootTemplate[] = [
   { id: "ember_gem", name: "余烬宝石", width: 1, height: 1, baseValue: 28, icon: "gem", tags: ["valuable"] },
   { id: "old_coin_pouch", name: "旧王钱袋", width: 1, height: 1, baseValue: 20, icon: "pouch", tags: ["valuable"] },
   { id: "oath_ring", name: "铁誓指环", width: 1, height: 1, baseValue: 24, icon: "ring", tags: ["valuable"] },
-  { id: "ash_blade", name: "灰烬长剑", width: 1, height: 2, baseValue: 34, icon: "blade", tags: ["weapon", "valuable"] },
+  { id: "ash_blade", name: "灰烬长剑", width: 1, height: 2, baseValue: 34, icon: "blade", tags: ["weapon", "valuable"], weaponBase: { damage: 30, attackIntervalMs: 480 } },
   { id: "sealed_scroll", name: "封蜡卷筒", width: 1, height: 2, baseValue: 30, icon: "scroll", tags: ["tool", "valuable"] },
   { id: "warden_helm", name: "守卫头盔", width: 2, height: 1, baseValue: 36, icon: "helm", tags: ["armor", "valuable"] },
-  { id: "breach_axe", name: "裂口战斧", width: 2, height: 1, baseValue: 38, icon: "axe", tags: ["weapon", "valuable"] },
+  { id: "breach_axe", name: "裂口战斧", width: 2, height: 1, baseValue: 38, icon: "axe", tags: ["weapon", "valuable"], weaponBase: { damage: 34, attackIntervalMs: 600 } },
   { id: "oath_plate", name: "旧誓胸甲", width: 2, height: 2, baseValue: 58, icon: "armor", tags: ["armor", "valuable"] },
   { id: "corrupt_tablet", name: "腐化石板", width: 2, height: 2, baseValue: 64, icon: "relic", tags: ["valuable"] },
 ];
@@ -65,6 +67,21 @@ export function lootRevealDuration(rarity: LootRarity): number {
   }[rarity];
 }
 
+function weaponStatsFor(template: LootTemplate, rarity: LootRarity): WeaponStats | undefined {
+  if (!template.weaponBase) return undefined;
+  const bonuses = {
+    common: { damage: 0, speed: 0, critChance: 0 },
+    magic: { damage: 2, speed: 0.03, critChance: 0.02 },
+    rare: { damage: 4, speed: 0.06, critChance: 0.04 },
+    red: { damage: 4, speed: 0.06, critChance: 0.04 },
+  }[rarity];
+  return {
+    damage: template.weaponBase.damage + bonuses.damage,
+    attackIntervalMs: Math.round(template.weaponBase.attackIntervalMs / (1 + bonuses.speed)),
+    critChance: bonuses.critChance,
+  };
+}
+
 export function generateChestLoot(chestId: string, type: ChestType, seed: number): LootItem[] {
   const itemCount = type === "boss" ? 5 : type === "reliquary" ? 4 : 3;
   const items: LootItem[] = [];
@@ -91,6 +108,7 @@ export function generateChestLoot(chestId: string, type: ChestType, seed: number
       value: Math.round(template.baseValue * multiplier * variation),
       icon: template.icon,
       tags: template.tags,
+      weaponStats: weaponStatsFor(template, rarity),
     });
   }
 
