@@ -115,7 +115,7 @@ export class HudScene extends Phaser.Scene {
       .setVisible(false);
 
     this.add
-      .text(640, 686, "WASD 移动  ·  鼠标左键 / 空格 挥砍  ·  Shift 翻滚  ·  按住 E 搜索  ·  Tab 行囊", {
+      .text(640, 686, "WASD 移动  ·  鼠标左键 / 空格 挥砍  ·  Shift 翻滚  ·  按住 E 搜索  ·  Tab 行囊  ·  M 静音", {
         fontFamily: "Microsoft YaHei, sans-serif",
         fontSize: "16px",
         color: "#aeb9bc",

@@ -33,6 +33,9 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - [x] Made loadout items clickable so rig, backpack, and weapon state can be changed during play.
 - [x] Added atomic in-place rotation and two-step safe return to the currently opened chest.
 - [x] Preserved stable item instance IDs when an item is returned to and re-taken from a chest.
+- [x] Added a Web Audio event consumer with autoplay unlock, per-event cooldowns, volume control, and `M` mute.
+- [x] Added synthesized cues for every audio event currently emitted by gameplay.
+- [x] Added rarity-aware pickup/reveal cues and per-container search loops that stop on cancel, damage, or completion.
 
 ## Active plan
 
@@ -53,7 +56,7 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - [ ] Split `GameScene` and `HudScene` responsibilities.
 - [x] Prevent enemy overlap and add chest collision.
 - [x] Skip unchanged fog redraws and gate minimap rendering by map-state revision.
-- [ ] Add a real audio event consumer.
+- [x] Add a real audio event consumer.
 - [ ] Improve keyboard accessibility and allow browser zoom.
 
 ### P2 — Expansion
@@ -86,6 +89,8 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 | 2026-11-20 | Loadout interaction | Headless Edge at `?qa=rig` | Passed; a `1×2` magazine rotated into a `2×1` rig pocket and backpack remained independent |
 | 2026-11-20 | Loadout organization | `npm run check` | Passed; 33 tests and production build |
 | 2026-11-20 | Loadout organization | Headless Edge at `?qa=rotate` and `?qa=discard` | Passed; in-place rotation and recoverable chest return verified |
+| 2026-11-20 | Audio event layer | `npm run check` | Passed; 37 tests and production build |
+| 2026-11-20 | Audio event layer | Headless Edge HUD render | Passed; mute shortcut help remains visible without clipping |
 
 ## Commits
 
@@ -96,4 +101,5 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - `bab22fc` — `feat: persist normal and drop-pack extractions`
 - `3d8b318` — `fix: improve collisions and map rendering`
 - `8390db0` — `feat: enable interactive rig loadouts`
+- `6db6996` — `feat: add safe loadout organization actions`
 

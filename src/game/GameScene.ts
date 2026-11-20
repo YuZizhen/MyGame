@@ -37,6 +37,7 @@ import type {
   ExtractionUiState,
   HudState,
   LootItem,
+  LootRarity,
   LootUiState,
   ProfileSummaryUi,
   RuntimeMapState,
@@ -142,6 +143,7 @@ export class GameScene extends Phaser.Scene {
   private searchGraphics!: Phaser.GameObjects.Graphics;
   private searchChest?: ChestState;
   private searchStartedAt = 0;
+  private searchRequiresRelease = false;
   private nearbyChest?: ChestState;
   private lootPanelOpen = false;
   private extractionPanelOpen = false;
@@ -421,6 +423,7 @@ export class GameScene extends Phaser.Scene {
     this.exitRing = undefined;
     this.searchChest = undefined;
     this.searchStartedAt = 0;
+    this.searchRequiresRelease = false;
     this.nearbyChest = undefined;
     this.lootPanelOpen = false;
     this.extractionPanelOpen = false;
@@ -800,6 +803,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private updateChestSearch(time: number): boolean {
+    if (!this.controls.interact.isDown) this.searchRequiresRelease = false;
     const nearest = this.findNearbyChest();
     if (nearest !== this.nearbyChest) {
       this.nearbyChest = nearest;
@@ -823,12 +827,15 @@ export class GameScene extends Phaser.Scene {
       this.cancelChestSearch();
       return false;
     }
+    if (this.searchRequiresRelease) return false;
 
     if (this.searchChest !== nearest) {
       this.cancelChestSearch();
       this.searchChest = nearest;
       this.searchStartedAt = time;
-      this.game.events.emit("audio:event", "container.search.start");
+      const payload = { containerId: nearest.id };
+      this.game.events.emit("audio:event", "container.search.start", payload);
+      this.game.events.emit("audio:event", "container.search.loop.start", payload);
     }
 
     const progress = Phaser.Math.Clamp((time - this.searchStartedAt) / nearest.searchDuration, 0, 1);
@@ -883,7 +890,9 @@ export class GameScene extends Phaser.Scene {
 
   private cancelChestSearch(): void {
     if (!this.searchChest) return;
-    this.game.events.emit("audio:event", "container.search.cancel");
+    const payload = { containerId: this.searchChest.id };
+    this.game.events.emit("audio:event", "container.search.loop.stop", payload);
+    this.game.events.emit("audio:event", "container.search.cancel", payload);
     if (!this.searchChest.opened) {
       this.tweens.add({ targets: this.searchChest.lid, y: 0, rotation: 0, duration: 140 });
       this.tweens.add({ targets: this.searchChest.glow, alpha: 0.16, scale: 0.6, duration: 180 });
@@ -894,6 +903,9 @@ export class GameScene extends Phaser.Scene {
   }
 
   private finishChestSearch(chest: ChestState): void {
+    const audioPayload = { containerId: chest.id };
+    this.game.events.emit("audio:event", "container.search.loop.stop", audioPayload);
+    this.game.events.emit("audio:event", "container.search.complete", audioPayload);
     chest.opened = true;
     chest.lock.setAlpha(0.45).setFillStyle(0x666b6b);
     this.tweens.add({ targets: chest.lid, y: -17, scaleY: 0.58, rotation: -0.08, duration: 330, ease: "Back.easeOut" });
@@ -904,7 +916,7 @@ export class GameScene extends Phaser.Scene {
       marker.opened = true;
       this.markMapDirty();
     }
-    this.game.events.emit("audio:event", "container.open");
+    this.game.events.emit("audio:event", "container.open", audioPayload);
     this.game.events.emit("hud:banner", `${this.chestName(chest.type)}已开启`);
     this.searchChest = undefined;
     this.searchStartedAt = 0;
@@ -957,7 +969,10 @@ export class GameScene extends Phaser.Scene {
     this.pendingDiscard = undefined;
     this.activeLootChest = chest;
     this.emitLootState();
-    this.game.events.emit("audio:event", "container.loot.reveal");
+    this.game.events.emit("audio:event", "container.loot.reveal", {
+      containerId: chest.id,
+      highestRarity: this.highestLootRarity(chest.loot),
+    });
   }
 
   private openInventoryPanel(): void {
@@ -1010,7 +1025,7 @@ export class GameScene extends Phaser.Scene {
     }
     this.loadout = { ...this.loadout, backpack: placement.value };
     chest.loot = chest.loot.filter((entry) => entry.id !== item.id);
-    this.game.events.emit("audio:event", "loot.item.pickup");
+    this.game.events.emit("audio:event", "loot.item.pickup", { rarity: item.rarity });
     this.emitLootState();
     this.showLoadoutMessage(`已收取 ${item.name} · ${item.width}×${item.height}`);
     this.emitHudState();
@@ -1132,6 +1147,14 @@ export class GameScene extends Phaser.Scene {
       icon: item.icon ?? "pouch",
       tags: [...item.tags],
     };
+  }
+
+  private highestLootRarity(items: readonly LootItem[]): LootRarity {
+    const order: Record<LootRarity, number> = { common: 0, magic: 1, rare: 2, red: 3 };
+    return items.reduce<LootRarity>(
+      (highest, item) => (order[item.rarity] > order[highest] ? item.rarity : highest),
+      "common",
+    );
   }
 
   private showLoadoutMessage(message: string): void {
@@ -1403,7 +1426,9 @@ export class GameScene extends Phaser.Scene {
 
   private damagePlayer(amount: number, sourceX: number, sourceY: number): void {
     if (this.runState !== "playing" || this.time.now < this.invulnerableUntil) return;
+    const interruptedSearch = Boolean(this.searchChest);
     this.cancelChestSearch();
+    if (interruptedSearch) this.searchRequiresRelease = true;
     this.hp = Math.max(0, this.hp - amount);
     this.invulnerableUntil = this.time.now + 350;
     const knockback = new Phaser.Math.Vector2(this.player.x - sourceX, this.player.y - sourceY).normalize().scale(110);

@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import "./style.css";
+import { GameAudio } from "./audio/GameAudio";
 import { GameScene } from "./game/GameScene";
 import { HudScene } from "./game/HudScene";
 
@@ -26,10 +27,15 @@ const game = new Phaser.Game({
   },
   scene: [GameScene, HudScene],
 });
+const gameAudio = new GameAudio(game);
+gameAudio.start();
 
 if (import.meta.env.DEV) {
   (window as Window & { __ASHEN_GAME__?: Phaser.Game }).__ASHEN_GAME__ = game;
 }
 
-window.addEventListener("beforeunload", () => game.destroy(true));
+window.addEventListener("beforeunload", () => {
+  gameAudio.destroy();
+  game.destroy(true);
+});
 
