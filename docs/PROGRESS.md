@@ -38,6 +38,7 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - [x] Added rarity-aware pickup/reveal cues and per-container search loops that stop on cancel, damage, or completion.
 - [x] Restored browser/pinch zoom, added screen-reader instructions/live announcements, and made the game shell keyboard-focusable.
 - [x] Added keyboard loot slots (`1–5`) and extraction choices (`1/2`) with visible prompts.
+- [x] Configured a GitHub Actions quality gate for unit tests, production build, and Chromium regression scenarios.
 
 ## Active plan
 
@@ -67,14 +68,15 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - [ ] Add run seeds, functional room types, shortcuts, and early extraction.
 - [ ] Add insurance storage and recovery rules.
 - [x] Add real-browser regression tests for keyboard focus, looting, and extraction.
-- [ ] Run unit, build, and browser regression tests in CI.
+- [x] Configure unit, build, and browser regression tests in CI.
+- [ ] Confirm the first remote GitHub Actions run passes.
 
 ## Known risks
 
 - `GameScene.ts` and `HudScene.ts` are oversized and should not absorb more domain logic.
 - Loadout organization supports click actions but not direct pointer drag-and-drop yet.
 - Items do not expose enough combat attributes for meaningful equipment comparison.
-- CI still needs to invoke the browser regression runner and provide an installed Chromium-compatible browser.
+- The new GitHub Actions workflow has been checked locally but its first remote run has not yet been observed.
 - The production bundle still reports a Phaser-driven chunk-size warning.
 
 ## Verification log
@@ -99,6 +101,7 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 | 2026-11-20 | Accessibility | Headless Edge at `?qa=loot` and `?qa=extract` | Passed; numbered keyboard prompts render without clipping |
 | 2026-11-20 | Accessibility | Built HTML inspection | Passed; restrictive viewport flags absent and ARIA help/live regions present |
 | 2026-11-20 | Browser regression | `npm run test:e2e` | Passed; 3 Edge scenarios cover Tab focus, keyboard looting, live announcements, drop-pack extraction, and a touch-capture smoke check |
+| 2026-11-20 | CI quality gate | Workflow inspection + `npm run check:full` | Passed locally; workflow installs Playwright Chromium before running the same quality gate |
 
 ## Commits
 

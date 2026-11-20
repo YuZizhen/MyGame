@@ -6,9 +6,11 @@ import { chromium } from "playwright-core";
 
 const PORT = await findAvailablePort();
 const BASE_URL = `http://127.0.0.1:${PORT}`;
-const BROWSER_CANDIDATES = [
-  process.env.BROWSER_PATH,
-  process.env.EDGE_PATH,
+const configuredBrowserPath = process.env.BROWSER_PATH ?? process.env.EDGE_PATH;
+if (configuredBrowserPath && !existsSync(configuredBrowserPath)) {
+  throw new Error(`Configured browser does not exist: ${configuredBrowserPath}`);
+}
+const LOCAL_BROWSER_CANDIDATES = [
   "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
   "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
   "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
@@ -20,12 +22,9 @@ const BROWSER_CANDIDATES = [
   "/usr/bin/google-chrome-stable",
   "/usr/bin/chromium",
   "/usr/bin/chromium-browser",
-].filter(Boolean);
-const executablePath = BROWSER_CANDIDATES.find((candidate) => existsSync(candidate));
-
-if (!executablePath) {
-  throw new Error("No supported Chromium browser was found. Set BROWSER_PATH to run browser regression tests.");
-}
+];
+const executablePath = configuredBrowserPath
+  ?? (process.env.CI ? undefined : LOCAL_BROWSER_CANDIDATES.find((candidate) => existsSync(candidate)));
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -73,13 +72,17 @@ async function waitForServer(server) {
 const server = spawn(
   process.execPath,
   ["node_modules/vite/bin/vite.js", "--host", "127.0.0.1", "--port", String(PORT), "--strictPort"],
-  { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
+  { cwd: process.cwd(), stdio: "ignore", windowsHide: true },
 );
 let browser;
 
 try {
   await waitForServer(server);
-  browser = await chromium.launch({ executablePath, headless: true, args: ["--disable-gpu"] });
+  browser = await chromium.launch({
+    ...(executablePath ? { executablePath } : {}),
+    headless: true,
+    args: ["--disable-gpu"],
+  });
   const context = await browser.newContext({ viewport: { width: 1280, height: 720 }, hasTouch: true });
   const page = await context.newPage();
   const runtimeErrors = [];
