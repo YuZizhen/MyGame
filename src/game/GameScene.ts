@@ -6,9 +6,11 @@ import {
   containerCapacity,
   containerUsedCells,
   createEmptyContainer,
+  discardStoredItem,
   equipWeaponFromContainer,
   listContainerItems,
   moveStoredItem,
+  rotateStoredItem,
   settleExtraction,
   unequipWeaponToBackpack,
   type ExtractionMode,
@@ -90,6 +92,11 @@ interface ControlKeys {
   restart: Phaser.Input.Keyboard.Key;
 }
 
+interface LoadoutItemPayload {
+  source: StoredContainerSlot;
+  itemId: string;
+}
+
 export class GameScene extends Phaser.Scene {
   private dungeon!: DungeonData;
   private worldWidth = 0;
@@ -142,8 +149,12 @@ export class GameScene extends Phaser.Scene {
   private qaLootChest?: ChestState;
   private qaTakeFirstLoot = false;
   private qaMoveFirstToRig = false;
+  private qaRotateFirstLoot = false;
+  private qaDiscardFirstLoot = false;
   private qaOpenExtraction = false;
   private qaExtractionMode?: ExtractionMode;
+  private pendingDiscard?: { itemId: string; expiresAt: number };
+  private returnedLootCounter = 0;
   private runState: "playing" | "won" | "lost" = "playing";
   private currentObjective = "探索灰烬地穴，寻找遗迹守门人";
 
@@ -221,17 +232,22 @@ export class GameScene extends Phaser.Scene {
         this.damageMob(this.boss, this.boss.maxHp);
       }
     }
-    if ((qaMode === "chest" || qaMode === "loot" || qaMode === "pickup" || qaMode === "rig") && this.chests[0]) {
+    if (
+      (qaMode === "chest" || qaMode === "loot" || qaMode === "pickup" || qaMode === "rig" || qaMode === "rotate" || qaMode === "discard") &&
+      this.chests[0]
+    ) {
       const qaChest = this.chests[0];
       this.player.setPosition(qaChest.container.x - 92, qaChest.container.y + 18);
       this.cameras.main.centerOn(this.player.x, this.player.y);
-      if (qaMode === "loot" || qaMode === "pickup" || qaMode === "rig") {
+      if (qaMode === "loot" || qaMode === "pickup" || qaMode === "rig" || qaMode === "rotate" || qaMode === "discard") {
         qaChest.opened = true;
         qaChest.lid.y = -17;
         qaChest.lid.scaleY = 0.58;
         this.qaLootChest = qaChest;
-        this.qaTakeFirstLoot = qaMode === "pickup" || qaMode === "rig";
+        this.qaTakeFirstLoot = qaMode !== "loot";
         this.qaMoveFirstToRig = qaMode === "rig";
+        this.qaRotateFirstLoot = qaMode === "rotate";
+        this.qaDiscardFirstLoot = qaMode === "discard";
       }
     }
 
@@ -259,10 +275,14 @@ export class GameScene extends Phaser.Scene {
       this.input.off(Phaser.Input.Events.POINTER_DOWN, this.handlePointerAttack, this);
       this.game.events.off("loot:take", this.handleLootTake, this);
       this.game.events.off("loadout:item-action", this.handleLoadoutItemAction, this);
+      this.game.events.off("loadout:item-rotate", this.handleLoadoutItemRotate, this);
+      this.game.events.off("loadout:item-discard", this.handleLoadoutItemDiscard, this);
       this.game.events.off("extraction:choose", this.handleExtractionChoice, this);
     });
     this.game.events.on("loot:take", this.handleLootTake, this);
     this.game.events.on("loadout:item-action", this.handleLoadoutItemAction, this);
+    this.game.events.on("loadout:item-rotate", this.handleLoadoutItemRotate, this);
+    this.game.events.on("loadout:item-discard", this.handleLoadoutItemDiscard, this);
     this.game.events.on("extraction:choose", this.handleExtractionChoice, this);
   }
 
@@ -301,6 +321,16 @@ export class GameScene extends Phaser.Scene {
         if (this.qaMoveFirstToRig) {
           this.qaMoveFirstToRig = false;
           this.handleLoadoutItemAction({ source: "backpack", itemId });
+        }
+        if (this.qaRotateFirstLoot) {
+          this.qaRotateFirstLoot = false;
+          this.handleLoadoutItemRotate({ source: "backpack", itemId });
+        }
+        if (this.qaDiscardFirstLoot) {
+          this.qaDiscardFirstLoot = false;
+          const payload = { source: "backpack" as const, itemId };
+          this.handleLoadoutItemDiscard(payload);
+          this.handleLoadoutItemDiscard(payload);
         }
       }
     }
@@ -398,8 +428,12 @@ export class GameScene extends Phaser.Scene {
     this.qaLootChest = undefined;
     this.qaTakeFirstLoot = false;
     this.qaMoveFirstToRig = false;
+    this.qaRotateFirstLoot = false;
+    this.qaDiscardFirstLoot = false;
     this.qaOpenExtraction = false;
     this.qaExtractionMode = undefined;
+    this.pendingDiscard = undefined;
+    this.returnedLootCounter = 0;
     this.runState = "playing";
     this.currentObjective = "探索灰烬地穴，寻找遗迹守门人";
   }
@@ -920,6 +954,7 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     this.lootPanelOpen = true;
+    this.pendingDiscard = undefined;
     this.activeLootChest = chest;
     this.emitLootState();
     this.game.events.emit("audio:event", "container.loot.reveal");
@@ -931,12 +966,14 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     this.lootPanelOpen = true;
+    this.pendingDiscard = undefined;
     this.activeLootChest = undefined;
     this.emitLootState();
   }
 
   private closeLootPanel(): void {
     this.lootPanelOpen = false;
+    this.pendingDiscard = undefined;
     this.activeLootChest = undefined;
     this.game.events.emit("loot:state", {
       open: false,
@@ -961,21 +998,21 @@ export class GameScene extends Phaser.Scene {
     const item = chest?.loot.find((entry) => entry.id === payload.itemId);
     if (!chest || !item) return;
     if (!this.loadout.backpack) {
-      this.game.events.emit("hud:banner", "当前未装备背包");
+      this.showLoadoutMessage("当前未装备背包");
       return;
     }
     const itemInstance = this.toItemInstance(item);
     const placement = autoPlaceItem(this.loadout.backpack, itemInstance);
     if (!placement.ok) {
-      this.game.events.emit("hud:banner", `背包空间不足：需要 ${item.width}×${item.height}`);
+      this.showLoadoutMessage(`背包空间不足：需要 ${item.width}×${item.height}`);
       this.game.events.emit("audio:event", "loot.item.pickup_failed");
       return;
     }
     this.loadout = { ...this.loadout, backpack: placement.value };
     chest.loot = chest.loot.filter((entry) => entry.id !== item.id);
-    this.game.events.emit("hud:banner", `已收取 ${item.name} · ${item.width}×${item.height}`);
     this.game.events.emit("audio:event", "loot.item.pickup");
     this.emitLootState();
+    this.showLoadoutMessage(`已收取 ${item.name} · ${item.width}×${item.height}`);
     this.emitHudState();
   }
 
@@ -1008,8 +1045,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     if (!result.ok) {
-      this.game.events.emit(
-        "hud:banner",
+      this.showLoadoutMessage(
         result.error === "weapon_required"
           ? "该物品不能装备为武器"
           : result.error === "container_missing"
@@ -1021,16 +1057,92 @@ export class GameScene extends Phaser.Scene {
     }
     this.loadout = result.value;
     if (this.loadout === previousLoadout) return;
-    this.game.events.emit("hud:banner", successMessage);
+    this.pendingDiscard = undefined;
     this.game.events.emit("audio:event", "inventory.item.place");
     this.emitLootState();
+    this.showLoadoutMessage(successMessage);
     this.emitHudState();
+  }
+
+  private handleLoadoutItemRotate(payload: LoadoutItemPayload): void {
+    if (!this.lootPanelOpen) return;
+    const sourceContainer = this.loadout[payload.source];
+    const item = sourceContainer
+      ? listContainerItems(sourceContainer).find((entry) => entry.id === payload.itemId)
+      : undefined;
+    if (!item) return;
+    const result = rotateStoredItem(this.loadout, item.id, payload.source);
+    if (!result.ok) {
+      this.showLoadoutMessage(`${item.name} 在当前口袋无法旋转`);
+      this.game.events.emit("audio:event", "inventory.item.reject");
+      return;
+    }
+    this.loadout = result.value;
+    this.pendingDiscard = undefined;
+    this.game.events.emit("audio:event", "inventory.item.rotate");
+    this.emitLootState();
+    this.showLoadoutMessage(`已旋转 ${item.name}`);
+  }
+
+  private handleLoadoutItemDiscard(payload: LoadoutItemPayload): void {
+    if (!this.lootPanelOpen) return;
+    const sourceContainer = this.loadout[payload.source];
+    const item = sourceContainer
+      ? listContainerItems(sourceContainer).find((entry) => entry.id === payload.itemId)
+      : undefined;
+    if (!item) return;
+    if (!this.activeLootChest) {
+      this.showLoadoutMessage("仅在打开宝箱时可退回物品，避免永久遗失");
+      return;
+    }
+    if (this.pendingDiscard?.itemId !== item.id || this.time.now > this.pendingDiscard.expiresAt) {
+      this.pendingDiscard = { itemId: item.id, expiresAt: this.time.now + 2500 };
+      this.showLoadoutMessage(`再次右键确认：将 ${item.name} 退回当前宝箱`);
+      return;
+    }
+
+    const result = discardStoredItem(this.loadout, item.id, payload.source);
+    if (!result.ok) {
+      this.showLoadoutMessage("退回物品失败，负载未改变");
+      return;
+    }
+    this.loadout = result.value.loadout;
+    this.activeLootChest.loot = [
+      ...this.activeLootChest.loot,
+      this.toReturnedLootItem(result.value.item),
+    ];
+    this.pendingDiscard = undefined;
+    this.game.events.emit("audio:event", "inventory.item.place");
+    this.emitLootState();
+    this.showLoadoutMessage(`已将 ${item.name} 退回宝箱`);
+    this.emitHudState();
+  }
+
+  private toReturnedLootItem(item: ItemInstance): LootItem {
+    this.returnedLootCounter += 1;
+    return {
+      id: `returned_${this.returnedLootCounter}`,
+      instanceId: item.id,
+      templateId: item.definitionId,
+      name: item.name,
+      width: item.width,
+      height: item.height,
+      rarity: item.rarity ?? "common",
+      value: item.value,
+      icon: item.icon ?? "pouch",
+      tags: [...item.tags],
+    };
+  }
+
+  private showLoadoutMessage(message: string): void {
+    this.game.events.emit("loot:message", message);
+    this.game.events.emit("hud:banner", message);
   }
 
   private toItemInstance(item: LootItem): ItemInstance {
     const corruption = item.rarity === "red" ? 30 : item.rarity === "rare" ? 10 : item.rarity === "magic" ? 3 : 0;
     return {
-      id: `${this.runId}:${item.id}`,
+      id: item.instanceId ?? `${this.runId}:${item.id}`,
       definitionId: item.templateId,
       name: item.name,
       width: item.width,

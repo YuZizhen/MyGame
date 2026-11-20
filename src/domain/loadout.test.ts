@@ -8,12 +8,15 @@ import {
   containerCapacity,
   containerUsedCells,
   createEmptyContainer,
+  discardStoredItem,
   equipWeaponFromContainer,
   equipWeapon,
   listContainerItems,
   moveStoredItem,
   placeItem,
   removeItem,
+  rotateItemInPlace,
+  rotateStoredItem,
   settleExtraction,
   unequipWeaponToBackpack,
   validateLoadout,
@@ -236,6 +239,55 @@ describe("cross-container transactions", () => {
     expect(removed.ok).toBe(true);
     expect(listContainerItems(rig)).toHaveLength(1);
     if (removed.ok) expect(listContainerItems(removed.value.container)).toHaveLength(0);
+  });
+
+  it("rotates an item in place without changing its cell origin", () => {
+    const magazine = item({ id: "magazine", width: 1, height: 2, tags: ["ammo"] });
+    const backpack = expectPlaced(
+      placeItem(createEmptyContainer(EXPEDITION_BACKPACK, "bag-1"), "main", magazine, 2, 3),
+    );
+    const loadout: LoadoutState = {
+      rig: createEmptyContainer(ASSAULT_RIG, "rig-1"),
+      backpack,
+    };
+
+    const result = rotateStoredItem(loadout, magazine.id, "backpack");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const placement = result.value.backpack?.pockets[0].placements[0];
+      expect(placement).toMatchObject({ x: 2, y: 3, rotated: true });
+    }
+  });
+
+  it("keeps the original placement when an in-place rotation would leave its pocket", () => {
+    const magazine = item({ id: "magazine", width: 1, height: 2, tags: ["ammo"] });
+    const rig = expectPlaced(placeItem(createEmptyContainer(ASSAULT_RIG, "rig-1"), "magazine_left", magazine, 0, 0, true));
+
+    const result = rotateItemInPlace(rig, magazine.id);
+
+    expect(result).toEqual({ ok: false, error: "item_outside_pocket" });
+    expect(rig.pockets[0].placements[0]).toMatchObject({ rotated: true, x: 0, y: 0 });
+  });
+
+  it("returns a discarded item while leaving the source loadout immutable", () => {
+    const cargo = item({ id: "cargo", width: 2, height: 2 });
+    const backpack = expectPlaced(
+      placeItem(createEmptyContainer(EXPEDITION_BACKPACK, "bag-1"), "main", cargo, 0, 0),
+    );
+    const loadout: LoadoutState = {
+      rig: createEmptyContainer(ASSAULT_RIG, "rig-1"),
+      backpack,
+    };
+
+    const result = discardStoredItem(loadout, cargo.id, "backpack");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.item.id).toBe(cargo.id);
+      expect(listContainerItems(result.value.loadout.backpack!)).toEqual([]);
+    }
+    expect(listContainerItems(loadout.backpack!).map((entry) => entry.id)).toEqual([cargo.id]);
   });
 });
 

@@ -31,6 +31,8 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - [x] Added atomic cross-container moves, weapon swaps, weapon unequip, and global duplicate-ID validation.
 - [x] Added rig-compatible medicine, ammunition, and tactical loot with a guaranteed supply-box slot.
 - [x] Made loadout items clickable so rig, backpack, and weapon state can be changed during play.
+- [x] Added atomic in-place rotation and two-step safe return to the currently opened chest.
+- [x] Preserved stable item instance IDs when an item is returned to and re-taken from a chest.
 
 ## Active plan
 
@@ -82,6 +84,8 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 | 2026-11-20 | Collision and map rendering | `npm run check` | Passed; 24 tests and production build |
 | 2026-11-20 | Loadout interaction | `npm run check` | Passed; 30 tests and production build |
 | 2026-11-20 | Loadout interaction | Headless Edge at `?qa=rig` | Passed; a `1×2` magazine rotated into a `2×1` rig pocket and backpack remained independent |
+| 2026-11-20 | Loadout organization | `npm run check` | Passed; 33 tests and production build |
+| 2026-11-20 | Loadout organization | Headless Edge at `?qa=rotate` and `?qa=discard` | Passed; in-place rotation and recoverable chest return verified |
 
 ## Commits
 
@@ -91,4 +95,5 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - `c6804ef` — `feat: integrate rig and backpack loadout UI`
 - `bab22fc` — `feat: persist normal and drop-pack extractions`
 - `3d8b318` — `fix: improve collisions and map rendering`
+- `8390db0` — `feat: enable interactive rig loadouts`
 

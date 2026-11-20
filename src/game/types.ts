@@ -48,6 +48,7 @@ export type LootRarity = ItemRarity;
 
 export interface LootItem {
   id: string;
+  instanceId?: string;
   templateId: string;
   name: string;
   width: number;

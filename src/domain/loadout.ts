@@ -105,6 +105,11 @@ export interface RemovedItem {
   placement: ItemPlacement;
 }
 
+export interface DiscardedItem {
+  loadout: LoadoutState;
+  item: ItemInstance;
+}
+
 export const ASSAULT_RIG: ContainerDefinition = {
   id: "rig_assault",
   name: "突击胸挂",
@@ -347,6 +352,56 @@ export function moveStoredItem(
       ...loadout,
       [source]: removed.value.container,
       [target]: placed.value,
+    },
+  };
+}
+
+export function rotateItemInPlace(
+  container: ContainerState,
+  itemId: string,
+): LoadoutResult<ContainerState> {
+  const removed = removeItem(container, itemId);
+  if (!removed.ok) return removed;
+  const placement = removed.value.placement;
+  return placeItem(
+    removed.value.container,
+    removed.value.pocketId,
+    removed.value.item,
+    placement.x,
+    placement.y,
+    !placement.rotated,
+  );
+}
+
+export function rotateStoredItem(
+  loadout: LoadoutState,
+  itemId: string,
+  source: StoredContainerSlot,
+): LoadoutResult<LoadoutState> {
+  const valid = validateLoadout(loadout);
+  if (!valid.ok) return valid;
+  const sourceContainer = loadout[source];
+  if (!sourceContainer) return { ok: false, error: "container_missing" };
+  const rotated = rotateItemInPlace(sourceContainer, itemId);
+  return rotated.ok ? { ok: true, value: { ...loadout, [source]: rotated.value } } : rotated;
+}
+
+export function discardStoredItem(
+  loadout: LoadoutState,
+  itemId: string,
+  source: StoredContainerSlot,
+): LoadoutResult<DiscardedItem> {
+  const valid = validateLoadout(loadout);
+  if (!valid.ok) return valid;
+  const sourceContainer = loadout[source];
+  if (!sourceContainer) return { ok: false, error: "container_missing" };
+  const removed = removeItem(sourceContainer, itemId);
+  if (!removed.ok) return removed;
+  return {
+    ok: true,
+    value: {
+      loadout: { ...loadout, [source]: removed.value.container },
+      item: removed.value.item,
     },
   };
 }

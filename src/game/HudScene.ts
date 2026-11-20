@@ -42,6 +42,8 @@ const DEFAULT_PROFILE_SUMMARY: ProfileSummaryUi = {
   status: "new",
 };
 
+const LOOT_HINT = "点击转移 / 换装 · Shift+点击旋转 · 右键两次退回宝箱 · Tab / Esc 关闭";
+
 export class HudScene extends Phaser.Scene {
   private hudState: HudState = { ...DEFAULT_HUD };
   private statusGraphics!: Phaser.GameObjects.Graphics;
@@ -58,6 +60,7 @@ export class HudScene extends Phaser.Scene {
   private lootTitle!: Phaser.GameObjects.Text;
   private lootHint!: Phaser.GameObjects.Text;
   private lootObjects: Phaser.GameObjects.GameObject[] = [];
+  private lootMessageVersion = 0;
   private extractionGraphics!: Phaser.GameObjects.Graphics;
   private extractionObjects: Phaser.GameObjects.GameObject[] = [];
   private lastExtractionOutcome?: ExtractionOutcomeUi;
@@ -70,6 +73,7 @@ export class HudScene extends Phaser.Scene {
   }
 
   create(): void {
+    this.input.mouse?.disableContextMenu();
     this.statusGraphics = this.add.graphics();
     this.minimapGraphics = this.add.graphics();
     this.lootGraphics = this.add.graphics().setDepth(100);
@@ -159,7 +163,7 @@ export class HudScene extends Phaser.Scene {
       .setVisible(false);
 
     this.lootHint = this.add
-      .text(640, 628, "箱内物品自动入背包 · 点击负载物品转移 / 换装 · Tab / Esc 关闭", {
+      .text(640, 628, LOOT_HINT, {
         fontFamily: "Microsoft YaHei, sans-serif",
         fontSize: "16px",
         color: "#aeb9bc",
@@ -189,6 +193,7 @@ export class HudScene extends Phaser.Scene {
     this.game.events.on("hud:banner", this.handleBanner, this);
     this.game.events.on("hud:reset", this.handleReset, this);
     this.game.events.on("loot:state", this.handleLootState, this);
+    this.game.events.on("loot:message", this.handleLootMessage, this);
     this.game.events.on("extraction:state", this.handleExtractionState, this);
     this.game.events.on("extraction:result", this.handleExtractionResult, this);
     this.game.events.on("profile:state", this.handleProfileState, this);
@@ -382,6 +387,7 @@ export class HudScene extends Phaser.Scene {
   }
 
   private handleLootState(state: LootUiState): void {
+    this.lootMessageVersion += 1;
     this.clearLootObjects();
     this.lootGraphics.clear();
     this.lootTitle.setVisible(false);
@@ -398,7 +404,7 @@ export class HudScene extends Phaser.Scene {
     this.lootGraphics.strokeRoundedRect(452, 130, 718, 458, 14);
 
     this.lootTitle.setText(state.chestId ? `${state.chestName ?? "宝箱"} · 搜刮` : "行囊整理").setVisible(true);
-    this.lootHint.setVisible(true);
+    this.lootHint.setText(LOOT_HINT).setColor("#aeb9bc").setVisible(true);
 
     const leftHeading = this.add
       .text(132, 150, state.chestId ? `箱内物品  ${state.chestItems.length}` : "当前没有打开的容器", {
@@ -416,13 +422,33 @@ export class HudScene extends Phaser.Scene {
       .setDepth(102);
     this.lootObjects.push(leftHeading, rightHeading);
 
-    state.chestItems.forEach((item, index) => {
+    state.chestItems.slice(0, 5).forEach((item, index) => {
       const x = 132;
       const y = 190 + index * 76;
       this.createChestItemCard(item, state.chestId!, x, y);
     });
+    if (state.chestItems.length > 5) {
+      const overflow = this.add
+        .text(132, 565, `还有 ${state.chestItems.length - 5} 件，取走上方物品后显示`, {
+          fontFamily: "Microsoft YaHei, sans-serif",
+          fontSize: "13px",
+          color: "#9facb0",
+        })
+        .setDepth(103);
+      this.lootObjects.push(overflow);
+    }
 
     this.drawLoadout(state.loadout);
+  }
+
+  private handleLootMessage(message: string): void {
+    if (!this.lootHint.visible) return;
+    const version = ++this.lootMessageVersion;
+    this.lootHint.setText(message).setColor("#f2d399");
+    this.time.delayedCall(1800, () => {
+      if (version !== this.lootMessageVersion || !this.lootHint.visible) return;
+      this.lootHint.setText(LOOT_HINT).setColor("#aeb9bc");
+    });
   }
 
   private createChestItemCard(item: LootItem, chestId: string, x: number, y: number): void {
@@ -564,12 +590,19 @@ export class HudScene extends Phaser.Scene {
           .setInteractive({ useHandCursor: true });
         hitArea.on(Phaser.Input.Events.POINTER_OVER, () => hitArea.setStrokeStyle(2, 0xf0e4d2, 0.55));
         hitArea.on(Phaser.Input.Events.POINTER_OUT, () => hitArea.setStrokeStyle());
-        hitArea.on(Phaser.Input.Events.POINTER_DOWN, () => {
+        hitArea.on(Phaser.Input.Events.POINTER_DOWN, (pointer: Phaser.Input.Pointer) => {
           if (container.kind === "rig" || container.kind === "backpack") {
-            this.game.events.emit("loadout:item-action", {
+            const payload = {
               source: container.kind,
               itemId: placement.item.id,
-            });
+            };
+            if (pointer.rightButtonDown()) {
+              this.game.events.emit("loadout:item-discard", payload);
+            } else if ((pointer.event as MouseEvent).shiftKey) {
+              this.game.events.emit("loadout:item-rotate", payload);
+            } else {
+              this.game.events.emit("loadout:item-action", payload);
+            }
           }
         });
         this.lootObjects.push(icon, hitArea);
@@ -812,6 +845,7 @@ export class HudScene extends Phaser.Scene {
     this.game.events.off("hud:banner", this.handleBanner, this);
     this.game.events.off("hud:reset", this.handleReset, this);
     this.game.events.off("loot:state", this.handleLootState, this);
+    this.game.events.off("loot:message", this.handleLootMessage, this);
     this.game.events.off("extraction:state", this.handleExtractionState, this);
     this.game.events.off("extraction:result", this.handleExtractionResult, this);
     this.game.events.off("profile:state", this.handleProfileState, this);
