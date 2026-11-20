@@ -159,7 +159,7 @@ export class HudScene extends Phaser.Scene {
       .setVisible(false);
 
     this.lootHint = this.add
-      .text(640, 628, "点击箱内物品自动放入背包 · Tab / Esc 关闭", {
+      .text(640, 628, "箱内物品自动入背包 · 点击负载物品转移 / 换装 · Tab / Esc 关闭", {
         fontFamily: "Microsoft YaHei, sans-serif",
         fontSize: "16px",
         color: "#aeb9bc",
@@ -476,7 +476,19 @@ export class HudScene extends Phaser.Scene {
         color: "#e7ecec",
       })
       .setDepth(103);
-    this.lootObjects.push(weaponLabel, weaponName);
+    const weaponButton = this.add
+      .rectangle(474, 184, 672, 66, 0xffffff, 0.001)
+      .setOrigin(0)
+      .setDepth(104)
+      .setInteractive({ useHandCursor: true });
+    weaponButton.on(Phaser.Input.Events.POINTER_OVER, () => weaponButton.setStrokeStyle(2, 0x62d48c, 0.5));
+    weaponButton.on(Phaser.Input.Events.POINTER_OUT, () => weaponButton.setStrokeStyle());
+    weaponButton.on(Phaser.Input.Events.POINTER_DOWN, () => {
+      if (loadout.weapon) {
+        this.game.events.emit("loadout:item-action", { source: "weapon", itemId: loadout.weapon.id });
+      }
+    });
+    this.lootObjects.push(weaponLabel, weaponName, weaponButton);
     if (loadout.weapon) {
       const weaponIcon = this.add.graphics().setDepth(103);
       this.drawLootIcon(weaponIcon, loadout.weapon, 548, 218, 0.5);
@@ -545,7 +557,22 @@ export class HudScene extends Phaser.Scene {
         this.lootGraphics.lineStyle(3, this.rarityColor(rarity), 0.95).strokeRoundedRect(x, y, width, height, 7);
         const icon = this.add.graphics().setDepth(103);
         this.drawLootIcon(icon, placement.item, x + width / 2, y + height / 2, Math.min(0.9, Math.min(width, height) / 56));
-        this.lootObjects.push(icon);
+        const hitArea = this.add
+          .rectangle(x, y, width, height, 0xffffff, 0.001)
+          .setOrigin(0)
+          .setDepth(104)
+          .setInteractive({ useHandCursor: true });
+        hitArea.on(Phaser.Input.Events.POINTER_OVER, () => hitArea.setStrokeStyle(2, 0xf0e4d2, 0.55));
+        hitArea.on(Phaser.Input.Events.POINTER_OUT, () => hitArea.setStrokeStyle());
+        hitArea.on(Phaser.Input.Events.POINTER_DOWN, () => {
+          if (container.kind === "rig" || container.kind === "backpack") {
+            this.game.events.emit("loadout:item-action", {
+              source: container.kind,
+              itemId: placement.item.id,
+            });
+          }
+        });
+        this.lootObjects.push(icon, hitArea);
       }
     }
   }

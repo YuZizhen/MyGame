@@ -7,19 +7,23 @@ interface LootTemplate {
   height: number;
   baseValue: number;
   icon: LootItem["icon"];
+  tags: LootItem["tags"];
   forcedRarity?: LootRarity;
 }
 
 const TEMPLATES: LootTemplate[] = [
-  { id: "ember_gem", name: "余烬宝石", width: 1, height: 1, baseValue: 28, icon: "gem" },
-  { id: "old_coin_pouch", name: "旧王钱袋", width: 1, height: 1, baseValue: 20, icon: "pouch" },
-  { id: "oath_ring", name: "铁誓指环", width: 1, height: 1, baseValue: 24, icon: "ring" },
-  { id: "ash_blade", name: "灰烬长剑", width: 1, height: 2, baseValue: 34, icon: "blade" },
-  { id: "sealed_scroll", name: "封蜡卷筒", width: 1, height: 2, baseValue: 30, icon: "scroll" },
-  { id: "warden_helm", name: "守卫头盔", width: 2, height: 1, baseValue: 36, icon: "helm" },
-  { id: "breach_axe", name: "裂口战斧", width: 2, height: 1, baseValue: 38, icon: "axe" },
-  { id: "oath_plate", name: "旧誓胸甲", width: 2, height: 2, baseValue: 58, icon: "armor" },
-  { id: "corrupt_tablet", name: "腐化石板", width: 2, height: 2, baseValue: 64, icon: "relic" },
+  { id: "field_bandage", name: "战地绷带", width: 1, height: 1, baseValue: 16, icon: "pouch", tags: ["medicine"] },
+  { id: "salvaged_magazine", name: "拾荒弹匣", width: 1, height: 2, baseValue: 22, icon: "scroll", tags: ["ammo"] },
+  { id: "flash_charge", name: "闪光药剂", width: 1, height: 1, baseValue: 24, icon: "gem", tags: ["tactical"] },
+  { id: "ember_gem", name: "余烬宝石", width: 1, height: 1, baseValue: 28, icon: "gem", tags: ["valuable"] },
+  { id: "old_coin_pouch", name: "旧王钱袋", width: 1, height: 1, baseValue: 20, icon: "pouch", tags: ["valuable"] },
+  { id: "oath_ring", name: "铁誓指环", width: 1, height: 1, baseValue: 24, icon: "ring", tags: ["valuable"] },
+  { id: "ash_blade", name: "灰烬长剑", width: 1, height: 2, baseValue: 34, icon: "blade", tags: ["weapon", "valuable"] },
+  { id: "sealed_scroll", name: "封蜡卷筒", width: 1, height: 2, baseValue: 30, icon: "scroll", tags: ["tool", "valuable"] },
+  { id: "warden_helm", name: "守卫头盔", width: 2, height: 1, baseValue: 36, icon: "helm", tags: ["armor", "valuable"] },
+  { id: "breach_axe", name: "裂口战斧", width: 2, height: 1, baseValue: 38, icon: "axe", tags: ["weapon", "valuable"] },
+  { id: "oath_plate", name: "旧誓胸甲", width: 2, height: 2, baseValue: 58, icon: "armor", tags: ["armor", "valuable"] },
+  { id: "corrupt_tablet", name: "腐化石板", width: 2, height: 2, baseValue: 64, icon: "relic", tags: ["valuable"] },
 ];
 
 const BOSS_RED_TEMPLATE: LootTemplate = {
@@ -29,6 +33,7 @@ const BOSS_RED_TEMPLATE: LootTemplate = {
   height: 3,
   baseValue: 220,
   icon: "relic",
+  tags: ["red_cargo", "valuable"],
   forcedRarity: "red",
 };
 
@@ -76,6 +81,7 @@ export function generateChestLoot(chestId: string, type: ChestType, seed: number
       rarity,
       value: Math.round(template.baseValue * multiplier * variation),
       icon: template.icon,
+      tags: template.tags,
     });
   }
 

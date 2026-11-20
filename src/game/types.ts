@@ -1,4 +1,4 @@
-import type { ExtractionMode, ItemIcon, ItemRarity, LoadoutState } from "../domain/loadout";
+import type { ExtractionMode, ItemIcon, ItemRarity, ItemTag, LoadoutState } from "../domain/loadout";
 
 export type TileValue = 0 | 1;
 
@@ -55,6 +55,7 @@ export interface LootItem {
   rarity: LootRarity;
   value: number;
   icon: ItemIcon;
+  tags: readonly ItemTag[];
 }
 
 export interface MapChestMarker {

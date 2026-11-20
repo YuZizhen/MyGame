@@ -8,9 +8,15 @@ import {
   containerCapacity,
   containerUsedCells,
   createEmptyContainer,
+  equipWeaponFromContainer,
   equipWeapon,
+  listContainerItems,
+  moveStoredItem,
   placeItem,
+  removeItem,
   settleExtraction,
+  unequipWeaponToBackpack,
+  validateLoadout,
   type ItemInstance,
   type LoadoutState,
 } from "./loadout";
@@ -135,6 +141,101 @@ describe("weapon slot", () => {
     expect(rejected).toEqual({ ok: false, error: "weapon_required" });
     expect(accepted.ok).toBe(true);
     if (accepted.ok) expect(accepted.value.weapon?.id).toBe("sword");
+  });
+
+  it("atomically swaps a stored weapon with the equipped weapon", () => {
+    const backpack = expectPlaced(
+      placeItem(
+        createEmptyContainer(EXPEDITION_BACKPACK, "bag-1"),
+        "main",
+        item({ id: "axe", width: 2, height: 1, tags: ["weapon"] }),
+        0,
+        0,
+      ),
+    );
+    const source: LoadoutState = {
+      weapon: item({ id: "sword", width: 1, height: 3, tags: ["weapon"] }),
+      rig: createEmptyContainer(ASSAULT_RIG, "rig-1"),
+      backpack,
+    };
+
+    const result = equipWeaponFromContainer(source, "axe", "backpack");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.weapon?.id).toBe("axe");
+      expect(result.value.backpack && listContainerItems(result.value.backpack).map((entry) => entry.id)).toEqual(["sword"]);
+    }
+    expect(source.weapon?.id).toBe("sword");
+  });
+
+  it("unequips a weapon only when the backpack can accept it", () => {
+    const loadout: LoadoutState = {
+      weapon: item({ id: "sword", width: 1, height: 3, tags: ["weapon"] }),
+      rig: createEmptyContainer(ASSAULT_RIG, "rig-1"),
+      backpack: createEmptyContainer(EXPEDITION_BACKPACK, "bag-1"),
+    };
+
+    const result = unequipWeaponToBackpack(loadout);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.weapon).toBeUndefined();
+      expect(result.value.backpack && listContainerItems(result.value.backpack)[0].id).toBe("sword");
+    }
+  });
+});
+
+describe("cross-container transactions", () => {
+  it("moves compatible medicine from backpack to rig", () => {
+    const medicine = item({ id: "medicine", tags: ["medicine"] });
+    const backpack = expectPlaced(
+      placeItem(createEmptyContainer(EXPEDITION_BACKPACK, "bag-1"), "main", medicine, 0, 0),
+    );
+    const loadout: LoadoutState = {
+      rig: createEmptyContainer(ASSAULT_RIG, "rig-1"),
+      backpack,
+    };
+
+    const result = moveStoredItem(loadout, medicine.id, "backpack", "rig");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(listContainerItems(result.value.rig).map((entry) => entry.id)).toEqual(["medicine"]);
+      expect(result.value.backpack && listContainerItems(result.value.backpack)).toEqual([]);
+    }
+  });
+
+  it("leaves both containers unchanged when the target rejects the item", () => {
+    const cargo = item({ id: "cargo", width: 2, height: 2, tags: ["valuable"] });
+    const backpack = expectPlaced(
+      placeItem(createEmptyContainer(EXPEDITION_BACKPACK, "bag-1"), "main", cargo, 0, 0),
+    );
+    const loadout: LoadoutState = {
+      rig: createEmptyContainer(ASSAULT_RIG, "rig-1"),
+      backpack,
+    };
+
+    const result = moveStoredItem(loadout, cargo.id, "backpack", "rig");
+
+    expect(result.ok).toBe(false);
+    expect(listContainerItems(loadout.rig)).toEqual([]);
+    expect(listContainerItems(loadout.backpack!).map((entry) => entry.id)).toEqual(["cargo"]);
+  });
+
+  it("removes an item immutably and detects duplicate loadout IDs", () => {
+    const duplicate = item({ id: "duplicate", tags: ["medicine"] });
+    const rig = expectPlaced(placeItem(createEmptyContainer(ASSAULT_RIG, "rig-1"), "medicine", duplicate, 0, 0));
+    const backpack = expectPlaced(
+      placeItem(createEmptyContainer(EXPEDITION_BACKPACK, "bag-1"), "main", duplicate, 0, 0),
+    );
+    const invalid: LoadoutState = { rig, backpack };
+
+    expect(validateLoadout(invalid)).toEqual({ ok: false, error: "duplicate_item" });
+    const removed = removeItem(rig, duplicate.id);
+    expect(removed.ok).toBe(true);
+    expect(listContainerItems(rig)).toHaveLength(1);
+    if (removed.ok) expect(listContainerItems(removed.value.container)).toHaveLength(0);
   });
 });
 

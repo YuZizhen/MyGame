@@ -20,6 +20,14 @@ describe("generateChestLoot", () => {
       rarity: "red",
       width: 2,
       height: 3,
+      tags: ["red_cargo", "valuable"],
     });
+  });
+
+  it("guarantees a rig-compatible combat item in the first supply slot", () => {
+    for (let seed = 1; seed <= 50; seed += 1) {
+      const [first] = generateChestLoot(`supply_${seed}`, "supply", seed);
+      expect(first.tags.some((tag) => tag === "medicine" || tag === "ammo" || tag === "tactical")).toBe(true);
+    }
   });
 });

@@ -9,6 +9,7 @@ export type ItemTag =
   | "red_cargo";
 
 export type ContainerKind = "rig" | "backpack" | "chest";
+export type StoredContainerSlot = "rig" | "backpack";
 export type ExtractionMode = "normal" | "drop_pack";
 export type ItemRarity = "common" | "magic" | "rare" | "red";
 export type ItemIcon = "gem" | "pouch" | "ring" | "blade" | "scroll" | "helm" | "axe" | "armor" | "relic";
@@ -77,6 +78,9 @@ export type LoadoutError =
   | "item_outside_pocket"
   | "item_overlaps"
   | "pocket_not_found"
+  | "item_not_found"
+  | "container_missing"
+  | "same_container"
   | "weapon_required"
   | "weapon_slot_occupied";
 
@@ -92,6 +96,13 @@ export interface ExtractionResult {
   droppedItemIds: readonly string[];
   corruptionBefore: number;
   corruptionAfter: number;
+}
+
+export interface RemovedItem {
+  container: ContainerState;
+  item: ItemInstance;
+  pocketId: string;
+  placement: ItemPlacement;
 }
 
 export const ASSAULT_RIG: ContainerDefinition = {
@@ -270,6 +281,112 @@ export function autoPlaceItem(
     }
   }
   return { ok: false, error: lastError };
+}
+
+export function removeItem(
+  container: ContainerState,
+  itemId: string,
+): LoadoutResult<RemovedItem> {
+  for (let pocketIndex = 0; pocketIndex < container.pockets.length; pocketIndex += 1) {
+    const pocket = container.pockets[pocketIndex];
+    const placementIndex = pocket.placements.findIndex((placement) => placement.item.id === itemId);
+    if (placementIndex < 0) continue;
+    const placement = pocket.placements[placementIndex];
+    const updatedPocket: PocketState = {
+      ...pocket,
+      placements: pocket.placements.filter((_, index) => index !== placementIndex),
+    };
+    return {
+      ok: true,
+      value: {
+        container: {
+          ...container,
+          pockets: container.pockets.map((existingPocket, index) =>
+            index === pocketIndex ? updatedPocket : existingPocket,
+          ),
+        },
+        item: placement.item,
+        pocketId: pocket.definition.id,
+        placement,
+      },
+    };
+  }
+  return { ok: false, error: "item_not_found" };
+}
+
+export function validateLoadout(loadout: LoadoutState): LoadoutResult<LoadoutState> {
+  const ids = [
+    ...(loadout.weapon ? [loadout.weapon.id] : []),
+    ...listContainerItems(loadout.rig).map((item) => item.id),
+    ...(loadout.backpack ? listContainerItems(loadout.backpack).map((item) => item.id) : []),
+  ];
+  return new Set(ids).size === ids.length
+    ? { ok: true, value: loadout }
+    : { ok: false, error: "duplicate_item" };
+}
+
+export function moveStoredItem(
+  loadout: LoadoutState,
+  itemId: string,
+  source: StoredContainerSlot,
+  target: StoredContainerSlot,
+): LoadoutResult<LoadoutState> {
+  const valid = validateLoadout(loadout);
+  if (!valid.ok) return valid;
+  if (source === target) return { ok: false, error: "same_container" };
+  const sourceContainer = loadout[source];
+  const targetContainer = loadout[target];
+  if (!sourceContainer || !targetContainer) return { ok: false, error: "container_missing" };
+  const removed = removeItem(sourceContainer, itemId);
+  if (!removed.ok) return removed;
+  const placed = autoPlaceItem(targetContainer, removed.value.item);
+  if (!placed.ok) return placed;
+  return {
+    ok: true,
+    value: {
+      ...loadout,
+      [source]: removed.value.container,
+      [target]: placed.value,
+    },
+  };
+}
+
+export function equipWeaponFromContainer(
+  loadout: LoadoutState,
+  itemId: string,
+  source: StoredContainerSlot,
+): LoadoutResult<LoadoutState> {
+  const valid = validateLoadout(loadout);
+  if (!valid.ok) return valid;
+  const sourceContainer = loadout[source];
+  if (!sourceContainer) return { ok: false, error: "container_missing" };
+  const removed = removeItem(sourceContainer, itemId);
+  if (!removed.ok) return removed;
+  if (!removed.value.item.tags.includes("weapon")) return { ok: false, error: "weapon_required" };
+  let updatedSource = removed.value.container;
+  if (loadout.weapon) {
+    const storedWeapon = autoPlaceItem(updatedSource, loadout.weapon);
+    if (!storedWeapon.ok) return storedWeapon;
+    updatedSource = storedWeapon.value;
+  }
+  return {
+    ok: true,
+    value: {
+      ...loadout,
+      weapon: removed.value.item,
+      [source]: updatedSource,
+    },
+  };
+}
+
+export function unequipWeaponToBackpack(loadout: LoadoutState): LoadoutResult<LoadoutState> {
+  const valid = validateLoadout(loadout);
+  if (!valid.ok) return valid;
+  if (!loadout.weapon) return { ok: false, error: "item_not_found" };
+  if (!loadout.backpack) return { ok: false, error: "container_missing" };
+  const placed = autoPlaceItem(loadout.backpack, loadout.weapon);
+  if (!placed.ok) return placed;
+  return { ok: true, value: { ...loadout, weapon: undefined, backpack: placed.value } };
 }
 
 export function equipWeapon(loadout: LoadoutState, item: ItemInstance): LoadoutResult<LoadoutState> {

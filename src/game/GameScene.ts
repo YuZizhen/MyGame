@@ -6,12 +6,16 @@ import {
   containerCapacity,
   containerUsedCells,
   createEmptyContainer,
+  equipWeaponFromContainer,
   listContainerItems,
+  moveStoredItem,
   settleExtraction,
+  unequipWeaponToBackpack,
   type ExtractionMode,
   type ExtractionResult,
   type ItemInstance,
   type LoadoutState,
+  type StoredContainerSlot,
 } from "../domain/loadout";
 import {
   commitExtraction,
@@ -137,6 +141,7 @@ export class GameScene extends Phaser.Scene {
   private activeLootChest?: ChestState;
   private qaLootChest?: ChestState;
   private qaTakeFirstLoot = false;
+  private qaMoveFirstToRig = false;
   private qaOpenExtraction = false;
   private qaExtractionMode?: ExtractionMode;
   private runState: "playing" | "won" | "lost" = "playing";
@@ -216,16 +221,17 @@ export class GameScene extends Phaser.Scene {
         this.damageMob(this.boss, this.boss.maxHp);
       }
     }
-    if ((qaMode === "chest" || qaMode === "loot" || qaMode === "pickup") && this.chests[0]) {
+    if ((qaMode === "chest" || qaMode === "loot" || qaMode === "pickup" || qaMode === "rig") && this.chests[0]) {
       const qaChest = this.chests[0];
       this.player.setPosition(qaChest.container.x - 92, qaChest.container.y + 18);
       this.cameras.main.centerOn(this.player.x, this.player.y);
-      if (qaMode === "loot" || qaMode === "pickup") {
+      if (qaMode === "loot" || qaMode === "pickup" || qaMode === "rig") {
         qaChest.opened = true;
         qaChest.lid.y = -17;
         qaChest.lid.scaleY = 0.58;
         this.qaLootChest = qaChest;
-        this.qaTakeFirstLoot = qaMode === "pickup";
+        this.qaTakeFirstLoot = qaMode === "pickup" || qaMode === "rig";
+        this.qaMoveFirstToRig = qaMode === "rig";
       }
     }
 
@@ -252,9 +258,11 @@ export class GameScene extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.input.off(Phaser.Input.Events.POINTER_DOWN, this.handlePointerAttack, this);
       this.game.events.off("loot:take", this.handleLootTake, this);
+      this.game.events.off("loadout:item-action", this.handleLoadoutItemAction, this);
       this.game.events.off("extraction:choose", this.handleExtractionChoice, this);
     });
     this.game.events.on("loot:take", this.handleLootTake, this);
+    this.game.events.on("loadout:item-action", this.handleLoadoutItemAction, this);
     this.game.events.on("extraction:choose", this.handleExtractionChoice, this);
   }
 
@@ -287,8 +295,13 @@ export class GameScene extends Phaser.Scene {
       this.qaLootChest = undefined;
       this.openChestPanel(chest);
       if (this.qaTakeFirstLoot && chest.loot[0]) {
+        const itemId = `${this.runId}:${chest.loot[0].id}`;
         this.qaTakeFirstLoot = false;
         this.handleLootTake({ chestId: chest.id, itemId: chest.loot[0].id });
+        if (this.qaMoveFirstToRig) {
+          this.qaMoveFirstToRig = false;
+          this.handleLoadoutItemAction({ source: "backpack", itemId });
+        }
       }
     }
 
@@ -384,6 +397,7 @@ export class GameScene extends Phaser.Scene {
     this.activeLootChest = undefined;
     this.qaLootChest = undefined;
     this.qaTakeFirstLoot = false;
+    this.qaMoveFirstToRig = false;
     this.qaOpenExtraction = false;
     this.qaExtractionMode = undefined;
     this.runState = "playing";
@@ -965,17 +979,55 @@ export class GameScene extends Phaser.Scene {
     this.emitHudState();
   }
 
+  private handleLoadoutItemAction(payload: {
+    source: StoredContainerSlot | "weapon";
+    itemId: string;
+  }): void {
+    if (!this.lootPanelOpen) return;
+    const previousLoadout = this.loadout;
+    let result: ReturnType<typeof unequipWeaponToBackpack>;
+    let successMessage: string;
+
+    if (payload.source === "weapon") {
+      result = unequipWeaponToBackpack(this.loadout);
+      successMessage = "武器已放入背包";
+    } else {
+      const sourceContainer = this.loadout[payload.source];
+      const item = sourceContainer
+        ? listContainerItems(sourceContainer).find((entry) => entry.id === payload.itemId)
+        : undefined;
+      if (!item) return;
+      if (item.tags.includes("weapon")) {
+        result = equipWeaponFromContainer(this.loadout, item.id, payload.source);
+        successMessage = `已装备 ${item.name}`;
+      } else {
+        const target: StoredContainerSlot = payload.source === "backpack" ? "rig" : "backpack";
+        result = moveStoredItem(this.loadout, item.id, payload.source, target);
+        successMessage = `已将 ${item.name} 移入${target === "rig" ? "胸挂" : "背包"}`;
+      }
+    }
+
+    if (!result.ok) {
+      this.game.events.emit(
+        "hud:banner",
+        result.error === "weapon_required"
+          ? "该物品不能装备为武器"
+          : result.error === "container_missing"
+            ? "缺少目标容器"
+            : "目标口袋不兼容或空间不足",
+      );
+      this.game.events.emit("audio:event", "inventory.item.reject");
+      return;
+    }
+    this.loadout = result.value;
+    if (this.loadout === previousLoadout) return;
+    this.game.events.emit("hud:banner", successMessage);
+    this.game.events.emit("audio:event", "inventory.item.place");
+    this.emitLootState();
+    this.emitHudState();
+  }
+
   private toItemInstance(item: LootItem): ItemInstance {
-    const tags: ItemInstance["tags"] =
-      item.rarity === "red"
-        ? ["red_cargo", "valuable"]
-        : item.icon === "blade" || item.icon === "axe"
-          ? ["weapon", "valuable"]
-          : item.icon === "armor" || item.icon === "helm"
-            ? ["armor", "valuable"]
-            : item.icon === "scroll"
-              ? ["tool", "valuable"]
-              : ["valuable"];
     const corruption = item.rarity === "red" ? 30 : item.rarity === "rare" ? 10 : item.rarity === "magic" ? 3 : 0;
     return {
       id: `${this.runId}:${item.id}`,
@@ -983,7 +1035,7 @@ export class GameScene extends Phaser.Scene {
       name: item.name,
       width: item.width,
       height: item.height,
-      tags,
+      tags: [...item.tags],
       value: item.value,
       corruption,
       rarity: item.rarity,

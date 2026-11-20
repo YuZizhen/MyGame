@@ -28,6 +28,9 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - [x] Connected normal and drop-pack extraction to persistent run settlement.
 - [x] Made extraction commits idempotent and every run item instance ID unique.
 - [x] Displayed warehouse count, successful extractions, and cumulative value after reload.
+- [x] Added atomic cross-container moves, weapon swaps, weapon unequip, and global duplicate-ID validation.
+- [x] Added rig-compatible medicine, ammunition, and tactical loot with a guaranteed supply-box slot.
+- [x] Made loadout items clickable so rig, backpack, and weapon state can be changed during play.
 
 ## Active plan
 
@@ -77,6 +80,8 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 | 2026-11-20 | Extraction persistence | Headless Edge at `?qa=extract` and `?qa=extract-drop` | Passed; choice preview, drop settlement, and saved result verified |
 | 2026-11-20 | Profile reload | Isolated Edge profile, complete extraction, browser restart | Passed; HUD restored 2 warehouse items, 1 extraction, and 1951 total value |
 | 2026-11-20 | Collision and map rendering | `npm run check` | Passed; 24 tests and production build |
+| 2026-11-20 | Loadout interaction | `npm run check` | Passed; 30 tests and production build |
+| 2026-11-20 | Loadout interaction | Headless Edge at `?qa=rig` | Passed; a `1×2` magazine rotated into a `2×1` rig pocket and backpack remained independent |
 
 ## Commits
 
@@ -85,4 +90,5 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - `5de90de` — `feat: add tested multi-container loadout domain`
 - `c6804ef` — `feat: integrate rig and backpack loadout UI`
 - `bab22fc` — `feat: persist normal and drop-pack extractions`
+- `3d8b318` — `fix: improve collisions and map rendering`
 
