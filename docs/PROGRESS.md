@@ -1,6 +1,6 @@
 # Development Progress
 
-Last updated: 2026-11-21
+Last updated: 2026-11-22
 
 ## Current branch
 
@@ -48,6 +48,8 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - [x] Fixed the zero-width loot progress bar that produced an infinite render transform and terminated Phaser's RAF chain at 0%.
 - [x] Added visible runtime diagnostics for stalled frames/search clocks, invalid search state, window errors, and emergency recovery.
 - [x] Removed destroyed enemies from runtime state and prevented dead or missing physics bodies from crashing loot and extraction panels.
+- [x] Added item detail windows with category, rarity, size, value, purpose, flavor text, weapon stats, and explicit context actions.
+- [x] Added confirmed permanent discard from the standalone loadout and safe return when a chest is open.
 
 ## Active plan
 
@@ -119,6 +121,8 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 | 2026-11-21 | Loot render deadlock | `npm run check` | Passed; 54 tests and production build |
 | 2026-11-21 | Loot render deadlock | `npm run test:e2e` | Passed; 6 Edge scenarios verify finite progress transforms in default and Canvas renderers, forced loop sleep recovery, search/pickup/close, loadout drag, and extraction with no page errors |
 | 2026-11-21 | Dead-mob panel crash | `npm run check:full` | Passed; 54 tests, production build, and 8 Edge scenarios including loot after normal-mob destruction and extraction after Boss destruction |
+| 2026-11-22 | Item detail actions | `npm run check` | Passed; 57 tests and production build |
+| 2026-11-22 | Item detail actions | `npm run test:e2e` | Passed; 9 Edge scenarios including detail rendering, button pickup, container move, confirmed permanent discard, and all previous regressions |
 
 ## Commits
 
@@ -137,4 +141,5 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - `3a4a46b` — `feat: add comparable weapon attributes`
 - `95127b5` — `fix: prevent container interaction deadlocks`
 - `a9e0e8a` — `fix: prevent loot progress render crashes`
+- `4118eaf` — `fix: ignore destroyed mobs in paused panels`
 

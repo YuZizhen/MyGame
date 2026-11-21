@@ -30,6 +30,29 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+async function clickHudLabel(page, label) {
+  await page.waitForFunction(
+    (expected) => window.__ASHEN_GAME__.scene.getScene("HudScene").lootObjects
+      .some((object) => typeof object.text === "string" && object.text === expected),
+    label,
+  );
+  const point = await page.evaluate((expected) => {
+    const game = window.__ASHEN_GAME__;
+    const hud = game.scene.getScene("HudScene");
+    const text = hud.lootObjects.find((object) => typeof object.text === "string" && object.text === expected);
+    const bounds = text.getBounds();
+    const canvasBounds = game.canvas.getBoundingClientRect();
+    return {
+      x: canvasBounds.left + (bounds.centerX / 1280) * canvasBounds.width,
+      y: canvasBounds.top + (bounds.centerY / 720) * canvasBounds.height,
+    };
+  }, label);
+  await page.mouse.move(point.x, point.y);
+  await page.mouse.down();
+  await page.waitForTimeout(30);
+  await page.mouse.up();
+}
+
 async function findAvailablePort() {
   const probe = createServer();
   await new Promise((resolve, reject) => {
@@ -142,6 +165,7 @@ try {
   );
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   await page.mouse.click(270, 222);
+  await clickHudLabel(page, "拾取到背包");
   await page.waitForFunction(
     (expected) => window.__ASHEN_GAME__.scene.getScene("GameScene").activeLootChest.loot.length === expected,
     searchedChestLootBefore.count - 1,
@@ -170,6 +194,7 @@ try {
   );
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   await page.mouse.click(270, 222);
+  await clickHudLabel(page, "拾取到背包");
   await page.waitForFunction(
     (expected) => window.__ASHEN_GAME__.scene.getScene("GameScene").activeLootChest.loot.length === expected,
     clickLootBefore.count - 1,
@@ -386,6 +411,7 @@ try {
     throw new Error(`Drag placement failed: ${JSON.stringify(dragState)}\n${String(error)}`);
   }
   await page.mouse.click(dragSetup.endX, dragSetup.endY);
+  await clickHudLabel(page, "移入胸挂");
   await page.waitForFunction(
     (itemId) => {
       const scene = window.__ASHEN_GAME__.scene.getScene("GameScene");
@@ -395,6 +421,40 @@ try {
         && (rigItems.some((entry) => entry.item.id === itemId) || scene.loadout.weapon?.id === itemId);
     },
     dragSetup.itemId,
+  );
+
+  await page.goto(`${BASE_URL}/?qa=pickup`);
+  await page.waitForFunction(() => {
+    const scene = window.__ASHEN_GAME__?.scene?.getScene("GameScene");
+    return scene?.lootPanelOpen === true && scene.loadout.backpack?.pockets[0]?.placements.length === 1;
+  });
+  const discardPoint = await page.evaluate(() => {
+    const game = window.__ASHEN_GAME__;
+    const scene = game.scene.getScene("GameScene");
+    scene.cancelLootItemSearch();
+    scene.openInventoryPanel();
+    const placement = scene.loadout.backpack.pockets[0].placements[0];
+    const canvasBounds = game.canvas.getBoundingClientRect();
+    return {
+      x: canvasBounds.left + ((800 + (placement.x + 0.5) * 46) / 1280) * canvasBounds.width,
+      y: canvasBounds.top + ((282 + (placement.y + 0.5) * 46) / 720) * canvasBounds.height,
+      itemId: placement.item.id,
+    };
+  });
+  await page.mouse.click(discardPoint.x, discardPoint.y);
+  await page.waitForFunction(() => {
+    const texts = window.__ASHEN_GAME__.scene.getScene("HudScene").lootObjects
+      .filter((object) => typeof object.text === "string")
+      .map((object) => object.text);
+    return texts.includes("用途") && texts.some((text) => text.includes("价值"));
+  });
+  await clickHudLabel(page, "丢弃物品");
+  await clickHudLabel(page, "确认永久丢弃");
+  await page.waitForFunction(
+    (itemId) => !window.__ASHEN_GAME__.scene.getScene("GameScene").loadout.backpack.pockets
+      .flatMap((pocket) => pocket.placements)
+      .some((placement) => placement.item.id === itemId),
+    discardPoint.itemId,
   );
 
   await page.goto(`${BASE_URL}/?qa=loot`);
@@ -432,7 +492,7 @@ try {
   assert(runtimeErrors.length === 0, `Browser runtime errors: ${runtimeErrors.join(" | ")}`);
 
   await context.close();
-  process.stdout.write("Browser regression: 8 scenarios passed\n");
+  process.stdout.write("Browser regression: 9 scenarios passed\n");
 } finally {
   try {
     if (browser) await browser.close();

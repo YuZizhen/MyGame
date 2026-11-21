@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import {
   containerCapacity,
   containerUsedCells,
+  listContainerItems,
   moveStoredItemToPosition,
   rotatedSize,
   weaponDamagePerSecond,
@@ -9,6 +10,7 @@ import {
   type ItemInstance,
   type StoredContainerSlot,
 } from "../domain/loadout";
+import { describeItem } from "./itemPresentation";
 import type {
   ExtractionOutcomeUi,
   ExtractionPreview,
@@ -57,6 +59,11 @@ interface LoadoutDropZone {
   cell: number;
 }
 
+type ItemDetailSelection =
+  | { source: "chest"; itemId: string; chestId: string; confirmingDiscard?: false }
+  | { source: "weapon"; itemId: string; confirmingDiscard?: false }
+  | { source: StoredContainerSlot; itemId: string; confirmingDiscard: boolean };
+
 export class HudScene extends Phaser.Scene {
   private hudState: HudState = { ...DEFAULT_HUD };
   private statusGraphics!: Phaser.GameObjects.Graphics;
@@ -78,6 +85,8 @@ export class HudScene extends Phaser.Scene {
   private lootSearchProgressFill?: Phaser.GameObjects.Rectangle;
   private lootSearchProgressText?: Phaser.GameObjects.Text;
   private lootMessageVersion = 0;
+  private lootState?: LootUiState;
+  private itemDetailSelection?: ItemDetailSelection;
   private extractionGraphics!: Phaser.GameObjects.Graphics;
   private extractionObjects: Phaser.GameObjects.GameObject[] = [];
   private lastExtractionOutcome?: ExtractionOutcomeUi;
@@ -406,12 +415,16 @@ export class HudScene extends Phaser.Scene {
   }
 
   private handleLootState(state: LootUiState): void {
+    this.lootState = state;
     this.lootMessageVersion += 1;
     this.clearLootObjects();
     this.lootGraphics.clear();
     this.lootTitle.setVisible(false);
     this.lootHint.setVisible(false);
-    if (!state.open || !state.loadout) return;
+    if (!state.open || !state.loadout) {
+      this.itemDetailSelection = undefined;
+      return;
+    }
     const loadout = state.loadout;
 
     this.lootGraphics.setVisible(true);
@@ -499,6 +512,7 @@ export class HudScene extends Phaser.Scene {
     }
 
     this.drawLoadout(loadout, true);
+    this.drawItemDetail(state);
   }
 
   private handleLootMessage(message: string): void {
@@ -509,6 +523,197 @@ export class HudScene extends Phaser.Scene {
       if (version !== this.lootMessageVersion || !this.lootHint.visible) return;
       this.lootHint.setText(LOOT_HINT).setColor("#aeb9bc");
     });
+  }
+
+  private selectItem(selection: ItemDetailSelection): void {
+    this.itemDetailSelection = selection;
+    if (this.lootState) this.handleLootState(this.lootState);
+  }
+
+  private drawItemDetail(state: LootUiState): void {
+    const selection = this.itemDetailSelection;
+    const loadout = state.loadout;
+    if (!selection || !loadout) return;
+
+    let item: LootItem | ItemInstance | undefined;
+    if (selection.source === "chest") {
+      const revealed = new Set(state.revealedItemIds ?? []);
+      item = revealed.has(selection.itemId)
+        ? state.chestItems.find((candidate) => candidate.id === selection.itemId)
+        : undefined;
+    } else if (selection.source === "weapon") {
+      item = loadout.weapon?.id === selection.itemId ? loadout.weapon : undefined;
+    } else {
+      const container = loadout[selection.source];
+      item = container
+        ? listContainerItems(container).find((candidate) => candidate.id === selection.itemId)
+        : undefined;
+    }
+    if (!item) {
+      this.itemDetailSelection = undefined;
+      return;
+    }
+
+    const presentation = describeItem(item);
+    const rarity = item.rarity ?? "common";
+    const rarityColor = this.rarityColor(rarity);
+    const panelX = 426;
+    const panelY = 142;
+    const panelWidth = 428;
+    const panelHeight = item.weaponStats ? 432 : 386;
+    const panel = this.add.graphics().setDepth(150);
+    panel.fillStyle(0x000000, 0.58).fillRoundedRect(panelX + 7, panelY + 9, panelWidth, panelHeight, 7);
+    panel.fillStyle(0x0b1116, 0.985).fillRoundedRect(panelX, panelY, panelWidth, panelHeight, 7);
+    panel.lineStyle(2, 0x3a464d, 1).strokeRoundedRect(panelX, panelY, panelWidth, panelHeight, 7);
+    panel.fillStyle(rarityColor, 0.95).fillRect(panelX + 1, panelY + 1, panelWidth - 2, 3);
+    panel.lineStyle(1, 0x273138, 0.95);
+    panel.lineBetween(panelX + 18, panelY + 92, panelX + panelWidth - 18, panelY + 92);
+    panel.lineBetween(panelX + 18, panelY + 214, panelX + panelWidth - 18, panelY + 214);
+    const blocker = this.add
+      .zone(panelX + panelWidth / 2, panelY + panelHeight / 2, panelWidth, panelHeight)
+      .setDepth(151)
+      .setInteractive();
+    const icon = this.add.graphics().setDepth(152);
+    panel.fillStyle(0x05080a, 1).fillRoundedRect(panelX + 18, panelY + 20, 62, 62, 5);
+    panel.lineStyle(2, rarityColor, 0.9).strokeRoundedRect(panelX + 18, panelY + 20, 62, 62, 5);
+    this.drawLootIcon(icon, item, panelX + 49, panelY + 51, 0.7);
+
+    const title = this.add.text(panelX + 96, panelY + 19, item.name, {
+      fontFamily: "Microsoft YaHei, sans-serif",
+      fontSize: "19px",
+      fontStyle: "bold",
+      color: "#e3e8e9",
+    }).setDepth(152);
+    const meta = this.add.text(
+      panelX + 96,
+      panelY + 48,
+      `◆ ${presentation.rarityLabel} · ${presentation.category}\n${item.width}×${item.height} 格 · 价值 ${item.value}`,
+      {
+        fontFamily: "Microsoft YaHei, sans-serif",
+        fontSize: "13px",
+        lineSpacing: 5,
+        color: this.rarityTextColor(rarity),
+      },
+    ).setDepth(152);
+    const purposeLabel = this.add.text(panelX + 20, panelY + 110, "用途", {
+      fontFamily: "Microsoft YaHei, sans-serif",
+      fontSize: "13px",
+      fontStyle: "bold",
+      color: "#d6a35c",
+    }).setDepth(152);
+    const purpose = this.add.text(panelX + 68, panelY + 108, presentation.purpose, {
+      fontFamily: "Microsoft YaHei, sans-serif",
+      fontSize: "14px",
+      color: "#cbd2d4",
+      wordWrap: { width: panelWidth - 92, useAdvancedWrap: true },
+      lineSpacing: 5,
+    }).setDepth(152);
+    const flavor = this.add.text(panelX + 20, panelY + 170, presentation.flavor, {
+      fontFamily: "Microsoft YaHei, sans-serif",
+      fontSize: "12px",
+      fontStyle: "italic",
+      color: "#748288",
+      wordWrap: { width: panelWidth - 40, useAdvancedWrap: true },
+    }).setDepth(152);
+    const valueNote = this.add.text(
+      panelX + 20,
+      panelY + 230,
+      this.detailValueText(item, loadout.weapon),
+      {
+        fontFamily: "Microsoft YaHei, sans-serif",
+        fontSize: item.weaponStats ? "14px" : "13px",
+        lineSpacing: 7,
+        color: item.weaponStats ? "#dce3e4" : "#9facb0",
+        wordWrap: { width: panelWidth - 40, useAdvancedWrap: true },
+      },
+    ).setDepth(152);
+
+    const close = this.add.text(panelX + panelWidth - 18, panelY + 14, "×", {
+      fontFamily: "Microsoft YaHei, sans-serif",
+      fontSize: "24px",
+      color: "#aeb9bc",
+    }).setOrigin(1, 0).setDepth(154).setInteractive({ useHandCursor: true });
+    close.on(Phaser.Input.Events.POINTER_DOWN, () => {
+      this.itemDetailSelection = undefined;
+      if (this.lootState) this.handleLootState(this.lootState);
+    });
+
+    const buttonY = panelY + panelHeight - 50;
+    if (selection.source === "chest") {
+      this.createDetailButton(panelX + 20, buttonY, 150, "拾取到背包", "primary", () => {
+        this.itemDetailSelection = undefined;
+        this.game.events.emit("loot:take", { chestId: selection.chestId, itemId: selection.itemId });
+      });
+    } else {
+      const primaryLabel = selection.source === "weapon"
+        ? "卸下到背包"
+        : item.tags.includes("weapon")
+          ? "装备武器"
+          : `移入${selection.source === "rig" ? "背包" : "胸挂"}`;
+      this.createDetailButton(panelX + 20, buttonY, 150, primaryLabel, "primary", () => {
+        this.itemDetailSelection = undefined;
+        this.game.events.emit("loadout:item-action", { source: selection.source, itemId: selection.itemId });
+      });
+      if (selection.source !== "weapon") {
+        const discardLabel = selection.confirmingDiscard
+          ? state.chestId ? "确认退回宝箱" : "确认永久丢弃"
+          : state.chestId ? "退回当前宝箱" : "丢弃物品";
+        this.createDetailButton(panelX + 188, buttonY, 184, discardLabel, "danger", () => {
+          if (!selection.confirmingDiscard) {
+            this.itemDetailSelection = { ...selection, confirmingDiscard: true };
+            if (this.lootState) this.handleLootState(this.lootState);
+            return;
+          }
+          this.itemDetailSelection = undefined;
+          this.game.events.emit("loadout:item-discard", {
+            source: selection.source,
+            itemId: selection.itemId,
+            confirmed: true,
+          });
+        });
+      }
+    }
+    this.lootObjects.push(panel, blocker, icon, title, meta, purposeLabel, purpose, flavor, valueNote, close);
+  }
+
+  private detailValueText(item: LootItem | ItemInstance, currentWeapon: ItemInstance | undefined): string {
+    if (!item.weaponStats) {
+      const corruption = "corruption" in item && item.corruption > 0 ? ` · 腐化 ${item.corruption}` : "";
+      return `占用 ${item.width}×${item.height} 格 · 撤离结算价值 ${item.value}${corruption}`;
+    }
+    const dps = weaponDamagePerSecond(item) ?? 0;
+    const currentDps = currentWeapon ? weaponDamagePerSecond(currentWeapon) : undefined;
+    const delta = currentDps && currentWeapon?.id !== item.id
+      ? Math.round(((dps / currentDps) - 1) * 100)
+      : undefined;
+    const comparison = delta === undefined ? "当前装备或无可比武器" : delta === 0 ? "预计输出持平" : `预计输出 ${delta > 0 ? "↑" : "↓"}${Math.abs(delta)}%`;
+    return `伤害 ${item.weaponStats.damage}\n攻击 ${((1000 / item.weaponStats.attackIntervalMs)).toFixed(2)}/秒\n暴击 ${Math.round(item.weaponStats.critChance * 100)}% · DPS ${dps.toFixed(1)}\n${comparison}`;
+  }
+
+  private createDetailButton(
+    x: number,
+    y: number,
+    width: number,
+    label: string,
+    tone: "primary" | "danger",
+    action: () => void,
+  ): void {
+    const button = this.add
+      .rectangle(x, y, width, 32, 0x111920, 1)
+      .setOrigin(0)
+      .setStrokeStyle(1, tone === "danger" ? 0x8f4947 : 0x9e895f, 1)
+      .setDepth(153)
+      .setInteractive({ useHandCursor: true });
+    const text = this.add.text(x + width / 2, y + 16, label, {
+      fontFamily: "Microsoft YaHei, sans-serif",
+      fontSize: "14px",
+      fontStyle: "bold",
+      color: tone === "danger" ? "#d87972" : "#e2d4b5",
+    }).setOrigin(0.5).setDepth(154);
+    button.on(Phaser.Input.Events.POINTER_OVER, () => button.setFillStyle(0x1a252c, 1));
+    button.on(Phaser.Input.Events.POINTER_OUT, () => button.setFillStyle(0x111920, 1));
+    button.on(Phaser.Input.Events.POINTER_DOWN, action);
+    this.lootObjects.push(button, text);
   }
 
   private createChestItemCard(
@@ -532,7 +737,8 @@ export class HudScene extends Phaser.Scene {
     card.on(Phaser.Input.Events.POINTER_OVER, () => card.setFillStyle(revealed ? 0x253139 : 0x101519, 1));
     card.on(Phaser.Input.Events.POINTER_OUT, () => card.setFillStyle(revealed ? 0x172027 : 0x050709, 1));
     card.on(Phaser.Input.Events.POINTER_DOWN, () => {
-      this.game.events.emit("loot:take", { chestId, itemId: item.id });
+      if (revealed) this.selectItem({ source: "chest", chestId, itemId: item.id });
+      else this.game.events.emit("loot:take", { chestId, itemId: item.id });
     });
     const icon = this.add.graphics().setDepth(103);
     if (revealed) this.drawLootIcon(icon, item, x + 32, y + 32, 0.58);
@@ -671,7 +877,7 @@ export class HudScene extends Phaser.Scene {
     weaponButton.on(Phaser.Input.Events.POINTER_OUT, () => weaponButton.setStrokeStyle());
     weaponButton.on(Phaser.Input.Events.POINTER_DOWN, () => {
       if (loadout.weapon) {
-        this.game.events.emit("loadout:item-action", { source: "weapon", itemId: loadout.weapon.id });
+        this.selectItem({ source: "weapon", itemId: loadout.weapon.id });
       }
     });
     this.lootObjects.push(weaponLabel, weaponName, weaponStatsText, weaponButton);
@@ -790,10 +996,7 @@ export class HudScene extends Phaser.Scene {
         hitArea.on(Phaser.Input.Events.POINTER_UP, (pointer: Phaser.Input.Pointer) => {
           const distance = Phaser.Math.Distance.Between(pressX, pressY, pointer.x, pointer.y);
           if (!modifiedAction && !dragged && distance < 9) {
-            this.game.events.emit("loadout:item-action", {
-              source: containerSlot,
-              itemId: placement.item.id,
-            });
+            this.selectItem({ source: containerSlot, itemId: placement.item.id, confirmingDiscard: false });
           }
         });
         hitArea.on(Phaser.Input.Events.DRAG_START, (_pointer: Phaser.Input.Pointer) => {

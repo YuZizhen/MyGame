@@ -1291,20 +1291,20 @@ export class GameScene extends Phaser.Scene {
     this.emitHudState();
   }
 
-  private handleLoadoutItemDiscard(payload: LoadoutItemPayload): void {
+  private handleLoadoutItemDiscard(payload: LoadoutItemPayload & { confirmed?: boolean }): void {
     if (!this.lootPanelOpen) return;
     const sourceContainer = this.loadout[payload.source];
     const item = sourceContainer
       ? listContainerItems(sourceContainer).find((entry) => entry.id === payload.itemId)
       : undefined;
     if (!item) return;
-    if (!this.activeLootChest) {
-      this.showLoadoutMessage("仅在打开宝箱时可退回物品，避免永久遗失");
-      return;
-    }
-    if (this.pendingDiscard?.itemId !== item.id || this.time.now > this.pendingDiscard.expiresAt) {
+    if (!payload.confirmed && (this.pendingDiscard?.itemId !== item.id || this.time.now > this.pendingDiscard.expiresAt)) {
       this.pendingDiscard = { itemId: item.id, expiresAt: this.time.now + 2500 };
-      this.showLoadoutMessage(`再次右键确认：将 ${item.name} 退回当前宝箱`);
+      this.showLoadoutMessage(
+        this.activeLootChest
+          ? `再次右键确认：将 ${item.name} 退回当前宝箱`
+          : `再次右键确认：永久丢弃 ${item.name}`,
+      );
       return;
     }
 
@@ -1314,16 +1314,20 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     this.loadout = result.value.loadout;
-    const returnedItem = this.toReturnedLootItem(result.value.item);
-    this.activeLootChest.loot = [
-      ...this.activeLootChest.loot,
-      returnedItem,
-    ];
-    this.activeLootChest.revealedItemIds.add(returnedItem.id);
+    if (this.activeLootChest) {
+      const returnedItem = this.toReturnedLootItem(result.value.item);
+      this.activeLootChest.loot = [
+        ...this.activeLootChest.loot,
+        returnedItem,
+      ];
+      this.activeLootChest.revealedItemIds.add(returnedItem.id);
+    }
     this.pendingDiscard = undefined;
     this.game.events.emit("audio:event", "inventory.item.place");
     this.emitLootState();
-    this.showLoadoutMessage(`已将 ${item.name} 退回宝箱`);
+    this.showLoadoutMessage(
+      this.activeLootChest ? `已将 ${item.name} 退回宝箱` : `已丢弃 ${item.name}`,
+    );
     this.emitHudState();
   }
 
