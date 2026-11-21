@@ -440,7 +440,12 @@ export class HudScene extends Phaser.Scene {
     closeButton.on(Phaser.Input.Events.POINTER_OVER, () => closeButton.setBackgroundColor("#39474e"));
     closeButton.on(Phaser.Input.Events.POINTER_OUT, () => closeButton.setBackgroundColor("#202a30"));
     closeButton.on(Phaser.Input.Events.POINTER_DOWN, () => this.game.events.emit("input:loot-close"));
-    this.lootObjects.push(closeButton);
+    const closeHitArea = this.add
+      .zone(1030, 106, 250, 62)
+      .setDepth(106)
+      .setInteractive({ useHandCursor: true });
+    closeHitArea.on(Phaser.Input.Events.POINTER_DOWN, () => this.game.events.emit("input:loot-close"));
+    this.lootObjects.push(closeButton, closeHitArea);
     const revealedItemIds = new Set(state.revealedItemIds ?? []);
     const unknownItemCount = state.chestItems.filter((item) => !revealedItemIds.has(item.id)).length;
 
@@ -559,8 +564,9 @@ export class HudScene extends Phaser.Scene {
     if (searching) {
       const progressBack = this.add.rectangle(x + 2, y + 59, 272, 3, 0x242d32, 1).setOrigin(0).setDepth(103);
       const progressFill = this.add
-        .rectangle(x + 2, y + 59, 272 * Phaser.Math.Clamp(searchProgress, 0, 1), 3, 0xd69a48, 1)
+        .rectangle(x + 2, y + 59, 272, 3, 0xd69a48, 1)
         .setOrigin(0)
+        .setScale(Phaser.Math.Clamp(searchProgress, 0, 1), 1)
         .setDepth(104);
       this.lootSearchProgressItemId = item.id;
       this.lootSearchProgressFill = progressFill;
@@ -618,7 +624,7 @@ export class HudScene extends Phaser.Scene {
       || !this.lootSearchProgressText
     ) return;
     const progress = Phaser.Math.Clamp(payload.progress, 0, 1);
-    this.lootSearchProgressFill.displayWidth = 272 * progress;
+    this.lootSearchProgressFill.setScale(progress, 1);
     const sizePrefix = this.lootSearchProgressText.text.split(" · ")[0];
     this.lootSearchProgressText.setText(`${sizePrefix} · 搜索中 ${Math.round(progress * 100)}%`);
   }

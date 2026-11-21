@@ -45,6 +45,8 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - [x] Added bounded weapon damage, speed, critical chance, real combat effects, and current-weapon comparison.
 - [x] Fixed the container dead-end by automatically identifying unknown loot in sequence without locking loadout interaction.
 - [x] Added focus-independent `E`/`Esc`/`Tab` close handling and a visible mouse close control.
+- [x] Fixed the zero-width loot progress bar that produced an infinite render transform and terminated Phaser's RAF chain at 0%.
+- [x] Added visible runtime diagnostics for stalled frames/search clocks, invalid search state, window errors, and emergency recovery.
 
 ## Active plan
 
@@ -113,6 +115,8 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 | 2026-11-20 | Weapon attributes | `npm run test:e2e` | Passed; revealed weapon comparison renders against the starter sword |
 | 2026-11-21 | Container interaction recovery | `npm run check` | Passed; 54 tests and production build |
 | 2026-11-21 | Container interaction recovery | `npm run test:e2e` | Passed; 5 Edge scenarios cover automatic sequential identification, search cancellation, mouse/keyboard/focus-independent close paths, pickup, loadout drag, and extraction |
+| 2026-11-21 | Loot render deadlock | `npm run check` | Passed; 54 tests and production build |
+| 2026-11-21 | Loot render deadlock | `npm run test:e2e` | Passed; 6 Edge scenarios verify finite progress transforms in default and Canvas renderers, forced loop sleep recovery, search/pickup/close, loadout drag, and extraction with no page errors |
 
 ## Commits
 
@@ -129,4 +133,5 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - `4e4a5a9` — `ci: run full browser quality gate`
 - `fdd4636` — `feat: add searchable container interactions`
 - `3a4a46b` — `feat: add comparable weapon attributes`
+- `95127b5` — `fix: prevent container interaction deadlocks`
 

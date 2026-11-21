@@ -368,7 +368,9 @@ export class GameScene extends Phaser.Scene {
     if (this.lootPanelOpen) {
       this.player.setVelocity(0, 0);
       this.mobs.forEach((mob) => mob.sprite.setVelocity(0, 0));
+      if (this.loadoutDragActive && !this.input.activePointer.isDown) this.loadoutDragActive = false;
       this.updateLootItemSearch(time);
+      this.startNextLootItemSearch();
       if (time - this.lastHudUpdate >= 100) {
         this.lastHudUpdate = time;
         this.emitHudState();
@@ -1091,10 +1093,20 @@ export class GameScene extends Phaser.Scene {
   private updateLootItemSearch(time: number): void {
     const search = this.lootItemSearch;
     if (!search) return;
+    if (!Number.isFinite(time) || !Number.isFinite(search.startedAt) || !Number.isFinite(search.duration) || search.duration <= 0) {
+      throw new Error(`[LOOT_SEARCH_INVALID_TIME] invalid search timing: update=${time}, start=${search.startedAt}, duration=${search.duration}`);
+    }
+    if (time < search.startedAt - 1000) {
+      throw new Error(`[LOOT_SEARCH_TIMEBASE_MISMATCH] update time ${time} is behind search start ${search.startedAt}`);
+    }
+    if (this.activeLootChest && this.activeLootChest.id !== search.chestId) {
+      throw new Error(`[LOOT_SEARCH_CHEST_MISMATCH] active=${this.activeLootChest.id}, search=${search.chestId}, item=${search.itemId}`);
+    }
     const chest = this.activeLootChest?.id === search.chestId ? this.activeLootChest : undefined;
     const item = chest?.loot.find((entry) => entry.id === search.itemId);
     if (!chest || !item) {
       this.cancelLootItemSearch();
+      this.startNextLootItemSearch();
       return;
     }
     if (time - search.startedAt >= search.duration) {
@@ -1132,7 +1144,7 @@ export class GameScene extends Phaser.Scene {
       this.cancelLootItemSearch();
       return;
     }
-    this.startNextLootItemSearch();
+    this.time.delayedCall(0, () => this.startNextLootItemSearch());
   }
 
   private cancelLootItemSearch(): void {

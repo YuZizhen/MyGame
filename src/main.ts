@@ -1,11 +1,15 @@
 import Phaser from "phaser";
 import "./style.css";
 import { GameAudio } from "./audio/GameAudio";
+import { installRuntimeDiagnostics } from "./debug/runtimeDiagnostics";
 import { GameScene } from "./game/GameScene";
 import { HudScene } from "./game/HudScene";
 
+const rendererType = import.meta.env.DEV && new URLSearchParams(window.location.search).get("renderer") === "canvas"
+  ? Phaser.CANVAS
+  : Phaser.AUTO;
 const game = new Phaser.Game({
-  type: Phaser.AUTO,
+  type: rendererType,
   parent: "game",
   backgroundColor: "#080b0f",
   pixelArt: false,
@@ -34,6 +38,7 @@ const game = new Phaser.Game({
 });
 const gameAudio = new GameAudio(game);
 gameAudio.start();
+const runtimeDiagnostics = installRuntimeDiagnostics(game);
 
 const gameShell = document.querySelector<HTMLElement>("#game-shell");
 const gameStatus = document.querySelector<HTMLElement>("#game-status");
@@ -90,9 +95,19 @@ const closeLootFromWindow = (event: KeyboardEvent): void => {
   event.stopPropagation();
   game.events.emit("input:loot-close");
 };
+const releaseLoadoutDrag = (): void => {
+  // Phaser may process its queued drag-start on the next frame, after the DOM pointerup.
+  // Release once more after that frame so a click can never leave drag state latched.
+  window.setTimeout(() => game.events.emit("loadout:drag-state", false), 250);
+};
 gameShell?.addEventListener("pointerdown", focusGame);
 document.addEventListener("keydown", manageTabFocus, true);
 window.addEventListener("keydown", closeLootFromWindow, true);
+window.addEventListener("pointerup", releaseLoadoutDrag, true);
+window.addEventListener("pointercancel", releaseLoadoutDrag, true);
+window.addEventListener("mouseup", releaseLoadoutDrag, true);
+window.addEventListener("touchend", releaseLoadoutDrag, true);
+window.addEventListener("touchcancel", releaseLoadoutDrag, true);
 game.events.on("hud:banner", announce);
 game.events.on("extraction:result", announceExtraction);
 
@@ -104,10 +119,16 @@ window.addEventListener("beforeunload", () => {
   gameShell?.removeEventListener("pointerdown", focusGame);
   document.removeEventListener("keydown", manageTabFocus, true);
   window.removeEventListener("keydown", closeLootFromWindow, true);
+  window.removeEventListener("pointerup", releaseLoadoutDrag, true);
+  window.removeEventListener("pointercancel", releaseLoadoutDrag, true);
+  window.removeEventListener("mouseup", releaseLoadoutDrag, true);
+  window.removeEventListener("touchend", releaseLoadoutDrag, true);
+  window.removeEventListener("touchcancel", releaseLoadoutDrag, true);
   game.events.off("hud:banner", announce);
   game.events.off("extraction:result", announceExtraction);
   if (announcementTimer !== undefined) window.clearTimeout(announcementTimer);
   gameAudio.destroy();
+  runtimeDiagnostics.destroy();
   game.destroy(true);
 });
 
