@@ -50,6 +50,7 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - [x] Removed destroyed enemies from runtime state and prevented dead or missing physics bodies from crashing loot and extraction panels.
 - [x] Added item detail windows with category, rarity, size, value, purpose, flavor text, weapon stats, and explicit context actions.
 - [x] Added confirmed permanent discard from the standalone loadout and safe return when a chest is open.
+- [x] Repositioned item details as narrow contextual panels beside items, made `Esc` close details first, and added race-free double-click pickup.
 
 ## Active plan
 
@@ -123,6 +124,8 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 | 2026-11-21 | Dead-mob panel crash | `npm run check:full` | Passed; 54 tests, production build, and 8 Edge scenarios including loot after normal-mob destruction and extraction after Boss destruction |
 | 2026-11-22 | Item detail actions | `npm run check` | Passed; 57 tests and production build |
 | 2026-11-22 | Item detail actions | `npm run test:e2e` | Passed; 9 Edge scenarios including detail rendering, button pickup, container move, confirmed permanent discard, and all previous regressions |
+| 2026-11-22 | Contextual item details | `npm run check` | Passed; 57 tests and production build |
+| 2026-11-22 | Contextual item details | `npm run test:e2e` | Passed; 10 Edge scenarios including adjacent panel sizing, detail-first `Esc`, race-free double-click pickup, and all previous regressions |
 
 ## Commits
 
@@ -142,4 +145,5 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - `95127b5` — `fix: prevent container interaction deadlocks`
 - `a9e0e8a` — `fix: prevent loot progress render crashes`
 - `4118eaf` — `fix: ignore destroyed mobs in paused panels`
+- `c6e9f48` — `feat: add actionable item detail windows`
 

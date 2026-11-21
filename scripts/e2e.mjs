@@ -173,6 +173,54 @@ try {
   await page.keyboard.press("e");
   await page.waitForFunction(() => window.__ASHEN_GAME__.scene.getScene("GameScene").lootPanelOpen === false);
 
+  await page.goto(`${BASE_URL}/?qa=loot`);
+  await page.waitForFunction(() => {
+    const scene = window.__ASHEN_GAME__?.scene?.getScene("GameScene");
+    const firstItem = scene?.activeLootChest?.loot[0];
+    return scene?.lootPanelOpen === true
+      && firstItem
+      && scene.activeLootChest.revealedItemIds.has(firstItem.id);
+  });
+  const doubleClickLootBefore = await page.evaluate(() => {
+    const scene = window.__ASHEN_GAME__.scene.getScene("GameScene");
+    return { count: scene.activeLootChest.loot.length, itemId: scene.activeLootChest.loot[0].id };
+  });
+  await page.mouse.click(270, 222);
+  await page.waitForFunction(() => window.__ASHEN_GAME__.registry.get("itemDetailOpen") === true);
+  const detailLayout = await page.evaluate(() => {
+    const hud = window.__ASHEN_GAME__.scene.getScene("HudScene");
+    const selection = hud.itemDetailSelection;
+    const blocker = hud.lootObjects.find((object) => object.type === "Zone" && object.depth === 151);
+    return {
+      anchorRight: selection.anchor.x + selection.anchor.width,
+      panelLeft: blocker.x - blocker.width / 2,
+      panelRight: blocker.x + blocker.width / 2,
+      width: blocker.width,
+    };
+  });
+  assert(detailLayout.width <= 288, `Item detail panel is still too wide: ${detailLayout.width}px`);
+  assert(
+    detailLayout.panelLeft >= detailLayout.anchorRight || detailLayout.panelRight <= detailLayout.anchorRight - 276,
+    "Item detail panel is not positioned beside the selected item",
+  );
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => {
+    const game = window.__ASHEN_GAME__;
+    return game.registry.get("itemDetailOpen") === false
+      && game.scene.getScene("GameScene").lootPanelOpen === true;
+  });
+  await page.mouse.click(270, 222);
+  await page.waitForTimeout(80);
+  await page.mouse.click(270, 222);
+  await page.waitForFunction(
+    (expected) => window.__ASHEN_GAME__.scene.getScene("GameScene").activeLootChest.loot.length === expected,
+    doubleClickLootBefore.count - 1,
+  );
+  assert(
+    await page.evaluate(() => window.__ASHEN_GAME__.registry.get("itemDetailOpen") === false),
+    "Double-click pickup left the item detail panel open",
+  );
+
   await page.goto(`${BASE_URL}/?qa=chest`);
   await page.waitForFunction(() => window.__ASHEN_GAME__?.scene?.isActive("GameScene"));
   await page.evaluate(() => {
@@ -210,10 +258,30 @@ try {
       y: canvasBounds.top + (bounds.centerY / 720) * canvasBounds.height,
     };
   });
-  await page.mouse.move(closePoint.x, closePoint.y);
-  await page.mouse.down();
-  await page.waitForFunction(() => window.__ASHEN_GAME__.scene.getScene("GameScene").lootPanelOpen === false);
-  await page.mouse.up();
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  try {
+    await page.mouse.click(closePoint.x, closePoint.y);
+    await page.waitForFunction(
+      () => window.__ASHEN_GAME__.scene.getScene("GameScene").lootPanelOpen === false,
+      undefined,
+      { timeout: 3_000 },
+    );
+  } catch (error) {
+    const closeState = await page.evaluate(() => {
+      const game = window.__ASHEN_GAME__;
+      const hud = game.scene.getScene("HudScene");
+      const closeObjects = hud.lootObjects
+        .filter((object) => (typeof object.text === "string" && object.text.startsWith("关闭")) || object.depth === 106)
+        .map((object) => ({ type: object.type, depth: object.depth, bounds: object.getBounds() }));
+      return {
+        lootPanelOpen: game.scene.getScene("GameScene").lootPanelOpen,
+        itemDetailOpen: game.registry.get("itemDetailOpen"),
+        pointer: { x: game.input.activePointer.x, y: game.input.activePointer.y, isDown: game.input.activePointer.isDown },
+        closeObjects,
+      };
+    });
+    throw new Error(`Close-button pointer interaction failed: ${JSON.stringify(closeState)}\n${String(error)}`);
+  }
 
   await page.goto(`${BASE_URL}/?qa=chest`);
   await page.waitForFunction(() => window.__ASHEN_GAME__?.scene?.isActive("GameScene"));
@@ -492,7 +560,7 @@ try {
   assert(runtimeErrors.length === 0, `Browser runtime errors: ${runtimeErrors.join(" | ")}`);
 
   await context.close();
-  process.stdout.write("Browser regression: 9 scenarios passed\n");
+  process.stdout.write("Browser regression: 10 scenarios passed\n");
 } finally {
   try {
     if (browser) await browser.close();

@@ -89,7 +89,14 @@ const manageTabFocus = (event: KeyboardEvent): void => {
   if (!event.repeat) game.events.emit("input:inventory-toggle");
 };
 const closeLootFromWindow = (event: KeyboardEvent): void => {
-  if (game.registry.get("lootPanelOpen") !== true || event.repeat) return;
+  if (event.repeat) return;
+  if (event.code === "Escape" && game.registry.get("itemDetailOpen") === true) {
+    event.preventDefault();
+    event.stopPropagation();
+    game.events.emit("input:item-detail-close");
+    return;
+  }
+  if (game.registry.get("lootPanelOpen") !== true) return;
   if (event.code !== "Escape" && event.code !== "KeyE") return;
   event.preventDefault();
   event.stopPropagation();

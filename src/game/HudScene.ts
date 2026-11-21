@@ -47,7 +47,7 @@ const DEFAULT_PROFILE_SUMMARY: ProfileSummaryUi = {
   status: "new",
 };
 
-const LOOT_HINT = "物品会自动逐件搜索 · 点击或数字1–5拾取 · 拖动指定格位 · E/Tab/Esc关闭";
+const LOOT_HINT = "物品会自动逐件搜索 · 单击查看 / 双击拾取 · 拖动指定格位 · E/Tab/Esc关闭";
 
 interface LoadoutDropZone {
   container: StoredContainerSlot;
@@ -59,10 +59,18 @@ interface LoadoutDropZone {
   cell: number;
 }
 
-type ItemDetailSelection =
+interface ItemDetailAnchor {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+type ItemDetailSelection = (
   | { source: "chest"; itemId: string; chestId: string; confirmingDiscard?: false }
   | { source: "weapon"; itemId: string; confirmingDiscard?: false }
-  | { source: StoredContainerSlot; itemId: string; confirmingDiscard: boolean };
+  | { source: StoredContainerSlot; itemId: string; confirmingDiscard: boolean }
+) & { anchor: ItemDetailAnchor };
 
 export class HudScene extends Phaser.Scene {
   private hudState: HudState = { ...DEFAULT_HUD };
@@ -87,6 +95,8 @@ export class HudScene extends Phaser.Scene {
   private lootMessageVersion = 0;
   private lootState?: LootUiState;
   private itemDetailSelection?: ItemDetailSelection;
+  private lastChestItemClick?: { itemId: string; at: number };
+  private chestItemSingleClickTimer?: Phaser.Time.TimerEvent;
   private extractionGraphics!: Phaser.GameObjects.Graphics;
   private extractionObjects: Phaser.GameObjects.GameObject[] = [];
   private lastExtractionOutcome?: ExtractionOutcomeUi;
@@ -99,6 +109,7 @@ export class HudScene extends Phaser.Scene {
   }
 
   create(): void {
+    this.registry.set("itemDetailOpen", false);
     this.input.mouse?.disableContextMenu();
     this.input.dragDistanceThreshold = 9;
     this.statusGraphics = this.add.graphics();
@@ -222,6 +233,7 @@ export class HudScene extends Phaser.Scene {
     this.game.events.on("loot:state", this.handleLootState, this);
     this.game.events.on("loot:message", this.handleLootMessage, this);
     this.game.events.on("loot:search-progress", this.handleLootSearchProgress, this);
+    this.game.events.on("input:item-detail-close", this.closeItemDetail, this);
     this.game.events.on("extraction:state", this.handleExtractionState, this);
     this.game.events.on("extraction:result", this.handleExtractionResult, this);
     this.game.events.on("profile:state", this.handleProfileState, this);
@@ -422,7 +434,11 @@ export class HudScene extends Phaser.Scene {
     this.lootTitle.setVisible(false);
     this.lootHint.setVisible(false);
     if (!state.open || !state.loadout) {
+      this.chestItemSingleClickTimer?.remove(false);
+      this.chestItemSingleClickTimer = undefined;
+      this.lastChestItemClick = undefined;
       this.itemDetailSelection = undefined;
+      this.registry.set("itemDetailOpen", false);
       return;
     }
     const loadout = state.loadout;
@@ -527,6 +543,17 @@ export class HudScene extends Phaser.Scene {
 
   private selectItem(selection: ItemDetailSelection): void {
     this.itemDetailSelection = selection;
+    this.registry.set("itemDetailOpen", true);
+    if (this.lootState) this.handleLootState(this.lootState);
+  }
+
+  private closeItemDetail(): void {
+    if (!this.itemDetailSelection) return;
+    this.chestItemSingleClickTimer?.remove(false);
+    this.chestItemSingleClickTimer = undefined;
+    this.itemDetailSelection = undefined;
+    this.lastChestItemClick = undefined;
+    this.registry.set("itemDetailOpen", false);
     if (this.lootState) this.handleLootState(this.lootState);
   }
 
@@ -551,16 +578,22 @@ export class HudScene extends Phaser.Scene {
     }
     if (!item) {
       this.itemDetailSelection = undefined;
+      this.registry.set("itemDetailOpen", false);
       return;
     }
 
     const presentation = describeItem(item);
     const rarity = item.rarity ?? "common";
     const rarityColor = this.rarityColor(rarity);
-    const panelX = 426;
-    const panelY = 142;
-    const panelWidth = 428;
-    const panelHeight = item.weaponStats ? 432 : 386;
+    const panelWidth = item.weaponStats ? 288 : 276;
+    const panelHeight = item.weaponStats ? 420 : 360;
+    const preferredRight = selection.anchor.x + selection.anchor.width + 12;
+    const panelX = Phaser.Math.Clamp(
+      preferredRight + panelWidth <= 1182 ? preferredRight : selection.anchor.x - panelWidth - 12,
+      98,
+      1182 - panelWidth,
+    );
+    const panelY = Phaser.Math.Clamp(selection.anchor.y - 14, 72, 646 - panelHeight);
     const panel = this.add.graphics().setDepth(150);
     panel.fillStyle(0x000000, 0.58).fillRoundedRect(panelX + 7, panelY + 9, panelWidth, panelHeight, 7);
     panel.fillStyle(0x0b1116, 0.985).fillRoundedRect(panelX, panelY, panelWidth, panelHeight, 7);
@@ -578,19 +611,19 @@ export class HudScene extends Phaser.Scene {
     panel.lineStyle(2, rarityColor, 0.9).strokeRoundedRect(panelX + 18, panelY + 20, 62, 62, 5);
     this.drawLootIcon(icon, item, panelX + 49, panelY + 51, 0.7);
 
-    const title = this.add.text(panelX + 96, panelY + 19, item.name, {
+    const title = this.add.text(panelX + 92, panelY + 19, item.name, {
       fontFamily: "Microsoft YaHei, sans-serif",
-      fontSize: "19px",
+      fontSize: "18px",
       fontStyle: "bold",
       color: "#e3e8e9",
     }).setDepth(152);
     const meta = this.add.text(
-      panelX + 96,
+      panelX + 92,
       panelY + 48,
       `◆ ${presentation.rarityLabel} · ${presentation.category}\n${item.width}×${item.height} 格 · 价值 ${item.value}`,
       {
         fontFamily: "Microsoft YaHei, sans-serif",
-        fontSize: "13px",
+        fontSize: "12px",
         lineSpacing: 5,
         color: this.rarityTextColor(rarity),
       },
@@ -601,11 +634,11 @@ export class HudScene extends Phaser.Scene {
       fontStyle: "bold",
       color: "#d6a35c",
     }).setDepth(152);
-    const purpose = this.add.text(panelX + 68, panelY + 108, presentation.purpose, {
+    const purpose = this.add.text(panelX + 64, panelY + 108, presentation.purpose, {
       fontFamily: "Microsoft YaHei, sans-serif",
       fontSize: "14px",
       color: "#cbd2d4",
-      wordWrap: { width: panelWidth - 92, useAdvancedWrap: true },
+      wordWrap: { width: panelWidth - 84, useAdvancedWrap: true },
       lineSpacing: 5,
     }).setDepth(152);
     const flavor = this.add.text(panelX + 20, panelY + 170, presentation.flavor, {
@@ -634,14 +667,14 @@ export class HudScene extends Phaser.Scene {
       color: "#aeb9bc",
     }).setOrigin(1, 0).setDepth(154).setInteractive({ useHandCursor: true });
     close.on(Phaser.Input.Events.POINTER_DOWN, () => {
-      this.itemDetailSelection = undefined;
-      if (this.lootState) this.handleLootState(this.lootState);
+      this.closeItemDetail();
     });
 
     const buttonY = panelY + panelHeight - 50;
     if (selection.source === "chest") {
-      this.createDetailButton(panelX + 20, buttonY, 150, "拾取到背包", "primary", () => {
+      this.createDetailButton(panelX + 14, buttonY, 112, "拾取到背包", "primary", () => {
         this.itemDetailSelection = undefined;
+        this.registry.set("itemDetailOpen", false);
         this.game.events.emit("loot:take", { chestId: selection.chestId, itemId: selection.itemId });
       });
     } else {
@@ -650,21 +683,23 @@ export class HudScene extends Phaser.Scene {
         : item.tags.includes("weapon")
           ? "装备武器"
           : `移入${selection.source === "rig" ? "背包" : "胸挂"}`;
-      this.createDetailButton(panelX + 20, buttonY, 150, primaryLabel, "primary", () => {
+      this.createDetailButton(panelX + 14, buttonY, 96, primaryLabel, "primary", () => {
         this.itemDetailSelection = undefined;
+        this.registry.set("itemDetailOpen", false);
         this.game.events.emit("loadout:item-action", { source: selection.source, itemId: selection.itemId });
       });
       if (selection.source !== "weapon") {
         const discardLabel = selection.confirmingDiscard
           ? state.chestId ? "确认退回宝箱" : "确认永久丢弃"
           : state.chestId ? "退回当前宝箱" : "丢弃物品";
-        this.createDetailButton(panelX + 188, buttonY, 184, discardLabel, "danger", () => {
+        this.createDetailButton(panelX + 118, buttonY, panelWidth - 132, discardLabel, "danger", () => {
           if (!selection.confirmingDiscard) {
             this.itemDetailSelection = { ...selection, confirmingDiscard: true };
             if (this.lootState) this.handleLootState(this.lootState);
             return;
           }
           this.itemDetailSelection = undefined;
+          this.registry.set("itemDetailOpen", false);
           this.game.events.emit("loadout:item-discard", {
             source: selection.source,
             itemId: selection.itemId,
@@ -737,8 +772,34 @@ export class HudScene extends Phaser.Scene {
     card.on(Phaser.Input.Events.POINTER_OVER, () => card.setFillStyle(revealed ? 0x253139 : 0x101519, 1));
     card.on(Phaser.Input.Events.POINTER_OUT, () => card.setFillStyle(revealed ? 0x172027 : 0x050709, 1));
     card.on(Phaser.Input.Events.POINTER_DOWN, () => {
-      if (revealed) this.selectItem({ source: "chest", chestId, itemId: item.id });
-      else this.game.events.emit("loot:take", { chestId, itemId: item.id });
+      if (!revealed) {
+        this.game.events.emit("loot:take", { chestId, itemId: item.id });
+        return;
+      }
+      const now = performance.now();
+      const doubleClick = this.lastChestItemClick?.itemId === item.id && now - this.lastChestItemClick.at <= 320;
+      if (doubleClick) {
+        this.chestItemSingleClickTimer?.remove(false);
+        this.chestItemSingleClickTimer = undefined;
+        this.lastChestItemClick = undefined;
+        this.itemDetailSelection = undefined;
+        this.registry.set("itemDetailOpen", false);
+        this.game.events.emit("loot:take", { chestId, itemId: item.id });
+      } else {
+        this.chestItemSingleClickTimer?.remove(false);
+        this.lastChestItemClick = { itemId: item.id, at: now };
+        this.chestItemSingleClickTimer = this.time.delayedCall(280, () => {
+          this.chestItemSingleClickTimer = undefined;
+          if (this.lastChestItemClick?.itemId !== item.id) return;
+          this.lastChestItemClick = undefined;
+          this.selectItem({
+            source: "chest",
+            chestId,
+            itemId: item.id,
+            anchor: { x, y, width: 276, height: 64 },
+          });
+        });
+      }
     });
     const icon = this.add.graphics().setDepth(103);
     if (revealed) this.drawLootIcon(icon, item, x + 32, y + 32, 0.58);
@@ -877,7 +938,11 @@ export class HudScene extends Phaser.Scene {
     weaponButton.on(Phaser.Input.Events.POINTER_OUT, () => weaponButton.setStrokeStyle());
     weaponButton.on(Phaser.Input.Events.POINTER_DOWN, () => {
       if (loadout.weapon) {
-        this.selectItem({ source: "weapon", itemId: loadout.weapon.id });
+        this.selectItem({
+          source: "weapon",
+          itemId: loadout.weapon.id,
+          anchor: { x: 474, y: 184, width: 672, height: 66 },
+        });
       }
     });
     this.lootObjects.push(weaponLabel, weaponName, weaponStatsText, weaponButton);
@@ -996,7 +1061,12 @@ export class HudScene extends Phaser.Scene {
         hitArea.on(Phaser.Input.Events.POINTER_UP, (pointer: Phaser.Input.Pointer) => {
           const distance = Phaser.Math.Distance.Between(pressX, pressY, pointer.x, pointer.y);
           if (!modifiedAction && !dragged && distance < 9) {
-            this.selectItem({ source: containerSlot, itemId: placement.item.id, confirmingDiscard: false });
+            this.selectItem({
+              source: containerSlot,
+              itemId: placement.item.id,
+              confirmingDiscard: false,
+              anchor: { x, y, width, height },
+            });
           }
         });
         hitArea.on(Phaser.Input.Events.DRAG_START, (_pointer: Phaser.Input.Pointer) => {
@@ -1311,12 +1381,15 @@ export class HudScene extends Phaser.Scene {
   }
 
   private removeListeners(): void {
+    this.chestItemSingleClickTimer?.remove(false);
+    this.chestItemSingleClickTimer = undefined;
     this.game.events.off("hud:update", this.handleHudUpdate, this);
     this.game.events.off("hud:banner", this.handleBanner, this);
     this.game.events.off("hud:reset", this.handleReset, this);
     this.game.events.off("loot:state", this.handleLootState, this);
     this.game.events.off("loot:message", this.handleLootMessage, this);
     this.game.events.off("loot:search-progress", this.handleLootSearchProgress, this);
+    this.game.events.off("input:item-detail-close", this.closeItemDetail, this);
     this.game.events.off("extraction:state", this.handleExtractionState, this);
     this.game.events.off("extraction:result", this.handleExtractionResult, this);
     this.game.events.off("profile:state", this.handleProfileState, this);
