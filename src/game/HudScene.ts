@@ -45,7 +45,7 @@ const DEFAULT_PROFILE_SUMMARY: ProfileSummaryUi = {
   status: "new",
 };
 
-const LOOT_HINT = "数字1–5拾取 · 拖动指定格位 · 点击自动转移 · Shift+点击旋转 · 右键退回 · E/Tab/Esc关闭";
+const LOOT_HINT = "物品会自动逐件搜索 · 点击或数字1–5拾取 · 拖动指定格位 · E/Tab/Esc关闭";
 
 interface LoadoutDropZone {
   container: StoredContainerSlot;
@@ -425,6 +425,22 @@ export class HudScene extends Phaser.Scene {
 
     this.lootTitle.setText(state.chestId ? `${state.chestName ?? "宝箱"} · 搜刮` : "行囊整理").setVisible(true);
     this.lootHint.setText(LOOT_HINT).setColor("#aeb9bc").setVisible(true);
+    const closeButton = this.add
+      .text(1150, 78, "关闭  E / Esc / Tab  ×", {
+        fontFamily: "Microsoft YaHei, sans-serif",
+        fontSize: "16px",
+        fontStyle: "bold",
+        color: "#d7dfe1",
+        backgroundColor: "#202a30",
+        padding: { x: 12, y: 14 },
+      })
+      .setOrigin(1, 0)
+      .setDepth(105)
+      .setInteractive({ useHandCursor: true });
+    closeButton.on(Phaser.Input.Events.POINTER_OVER, () => closeButton.setBackgroundColor("#39474e"));
+    closeButton.on(Phaser.Input.Events.POINTER_OUT, () => closeButton.setBackgroundColor("#202a30"));
+    closeButton.on(Phaser.Input.Events.POINTER_DOWN, () => this.game.events.emit("input:loot-close"));
+    this.lootObjects.push(closeButton);
     const revealedItemIds = new Set(state.revealedItemIds ?? []);
     const unknownItemCount = state.chestItems.filter((item) => !revealedItemIds.has(item.id)).length;
 
@@ -477,7 +493,7 @@ export class HudScene extends Phaser.Scene {
       this.lootObjects.push(overflow);
     }
 
-    this.drawLoadout(loadout, !state.searchingItemId);
+    this.drawLoadout(loadout, true);
   }
 
   private handleLootMessage(message: string): void {
@@ -814,16 +830,17 @@ export class HudScene extends Phaser.Scene {
           const cancelled = pointer.event?.type === "touchcancel" || pointer.event?.type === "pointercancel";
           hitArea.setPosition(x, y).setDepth(104).setFillStyle(0xffffff, 0.001).setStrokeStyle();
           dragged = false;
+          if (!cancelled && destination) {
+            this.game.events.emit("loadout:item-drop", {
+              source: containerSlot,
+              itemId: placement.item.id,
+              target: destination.container,
+              pocketId: destination.pocketId,
+              x: destination.x,
+              y: destination.y,
+            });
+          }
           this.game.events.emit("loadout:drag-state", false);
-          if (cancelled || !destination) return;
-          this.game.events.emit("loadout:item-drop", {
-            source: containerSlot,
-            itemId: placement.item.id,
-            target: destination.container,
-            pocketId: destination.pocketId,
-            x: destination.x,
-            y: destination.y,
-          });
         });
         this.lootObjects.push(icon, hitArea);
       }

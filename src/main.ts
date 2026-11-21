@@ -70,6 +70,12 @@ const announceExtraction = (outcome: { mode: string; retainedItemCount: number; 
 };
 const manageTabFocus = (event: KeyboardEvent): void => {
   if (event.code !== "Tab" || !gameShell) return;
+  if (game.registry.get("lootPanelOpen") === true && !event.shiftKey) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!event.repeat) game.events.emit("input:loot-close");
+    return;
+  }
   if (document.activeElement !== gameShell || event.shiftKey) {
     event.stopPropagation();
     return;
@@ -77,8 +83,16 @@ const manageTabFocus = (event: KeyboardEvent): void => {
   event.preventDefault();
   if (!event.repeat) game.events.emit("input:inventory-toggle");
 };
+const closeLootFromWindow = (event: KeyboardEvent): void => {
+  if (game.registry.get("lootPanelOpen") !== true || event.repeat) return;
+  if (event.code !== "Escape" && event.code !== "KeyE") return;
+  event.preventDefault();
+  event.stopPropagation();
+  game.events.emit("input:loot-close");
+};
 gameShell?.addEventListener("pointerdown", focusGame);
 document.addEventListener("keydown", manageTabFocus, true);
+window.addEventListener("keydown", closeLootFromWindow, true);
 game.events.on("hud:banner", announce);
 game.events.on("extraction:result", announceExtraction);
 
@@ -89,6 +103,7 @@ if (import.meta.env.DEV) {
 window.addEventListener("beforeunload", () => {
   gameShell?.removeEventListener("pointerdown", focusGame);
   document.removeEventListener("keydown", manageTabFocus, true);
+  window.removeEventListener("keydown", closeLootFromWindow, true);
   game.events.off("hud:banner", announce);
   game.events.off("extraction:result", announceExtraction);
   if (announcementTimer !== undefined) window.clearTimeout(announcementTimer);

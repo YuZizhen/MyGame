@@ -1,6 +1,6 @@
 # Development Progress
 
-Last updated: 2026-11-20
+Last updated: 2026-11-21
 
 ## Current branch
 
@@ -43,6 +43,8 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - [x] Fixed missed panel shortcuts and verified normal hold-to-open, mouse pickup, and `E`/`Esc` close flows.
 - [x] Added hidden chest silhouettes with rarity-scaled item searches, reveal light echoes, and rarity audio.
 - [x] Added bounded weapon damage, speed, critical chance, real combat effects, and current-weapon comparison.
+- [x] Fixed the container dead-end by automatically identifying unknown loot in sequence without locking loadout interaction.
+- [x] Added focus-independent `E`/`Esc`/`Tab` close handling and a visible mouse close control.
 
 ## Active plan
 
@@ -109,6 +111,8 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 | 2026-11-20 | Loot identification | `npm run test:e2e` | Passed; hold-to-open, hidden reveal, second-action pickup, `E`/`Esc` close, drag, and extraction verified |
 | 2026-11-20 | Weapon attributes | `npm run check` | Passed; 54 tests and production build, including legacy/invalid profile validation |
 | 2026-11-20 | Weapon attributes | `npm run test:e2e` | Passed; revealed weapon comparison renders against the starter sword |
+| 2026-11-21 | Container interaction recovery | `npm run check` | Passed; 54 tests and production build |
+| 2026-11-21 | Container interaction recovery | `npm run test:e2e` | Passed; 5 Edge scenarios cover automatic sequential identification, search cancellation, mouse/keyboard/focus-independent close paths, pickup, loadout drag, and extraction |
 
 ## Commits
 
@@ -124,4 +128,5 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - `41e9820` — `feat: improve keyboard and browser accessibility`
 - `4e4a5a9` — `ci: run full browser quality gate`
 - `fdd4636` — `feat: add searchable container interactions`
+- `3a4a46b` — `feat: add comparable weapon attributes`
 

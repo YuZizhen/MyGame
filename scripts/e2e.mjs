@@ -54,8 +54,8 @@ async function stopServer(server) {
   }
 }
 
-async function waitForServer(server) {
-  const deadline = Date.now() + 15_000;
+async function waitForServer(server, readServerOutput) {
+  const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     if (server.exitCode !== null) throw new Error(`Vite exited early with code ${server.exitCode}`);
     try {
@@ -66,18 +66,22 @@ async function waitForServer(server) {
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  throw new Error("Timed out waiting for the Vite development server");
+  const output = readServerOutput().trim();
+  throw new Error(`Timed out waiting for the Vite development server${output ? `\n${output}` : " (no child-process output)"}`);
 }
 
 const server = spawn(
   process.execPath,
   ["node_modules/vite/bin/vite.js", "--host", "127.0.0.1", "--port", String(PORT), "--strictPort"],
-  { cwd: process.cwd(), stdio: "ignore", windowsHide: true },
+  { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
 );
+let serverOutput = "";
+server.stdout?.on("data", (chunk) => { serverOutput += chunk.toString(); });
+server.stderr?.on("data", (chunk) => { serverOutput += chunk.toString(); });
 let browser;
 
 try {
-  await waitForServer(server);
+  await waitForServer(server, () => serverOutput);
   browser = await chromium.launch({
     ...(executablePath ? { executablePath } : {}),
     headless: true,
@@ -136,15 +140,21 @@ try {
   await page.keyboard.press("e");
   await page.waitForFunction(() => window.__ASHEN_GAME__.scene.getScene("GameScene").lootPanelOpen === false);
 
-  await page.goto(`${BASE_URL}/?qa=loot`);
-  await page.waitForFunction(() => window.__ASHEN_GAME__?.scene?.getScene("GameScene")?.lootPanelOpen === true);
+  await page.goto(`${BASE_URL}/?qa=chest`);
+  await page.waitForFunction(() => window.__ASHEN_GAME__?.scene?.isActive("GameScene"));
+  await page.evaluate(() => {
+    window.__ASHEN_GAME__.scene.getScene("GameScene").chests[0].loot[0].rarity = "red";
+  });
+  await page.keyboard.down("e");
+  await page.waitForFunction(() => window.__ASHEN_GAME__.scene.getScene("GameScene").chests[0]?.opened === true);
+  await page.keyboard.up("e");
+  await page.waitForFunction(() => window.__ASHEN_GAME__.scene.getScene("GameScene").lootPanelOpen === true);
   const clickLootBefore = await page.evaluate(
     () => {
       const chest = window.__ASHEN_GAME__.scene.getScene("GameScene").activeLootChest;
       return { count: chest.loot.length, itemId: chest.loot[0].id };
     },
   );
-  await page.mouse.click(270, 222);
   await page.waitForFunction(
     (itemId) => window.__ASHEN_GAME__.scene.getScene("GameScene").activeLootChest.revealedItemIds.has(itemId),
     clickLootBefore.itemId,
@@ -155,6 +165,36 @@ try {
     (expected) => window.__ASHEN_GAME__.scene.getScene("GameScene").activeLootChest.loot.length === expected,
     clickLootBefore.count - 1,
   );
+  await page.mouse.click(1100, 100);
+  await page.waitForFunction(() => window.__ASHEN_GAME__.scene.getScene("GameScene").lootPanelOpen === false);
+
+  await page.goto(`${BASE_URL}/?qa=chest`);
+  await page.waitForFunction(() => window.__ASHEN_GAME__?.scene?.isActive("GameScene"));
+  await page.evaluate(() => {
+    window.__ASHEN_GAME__.scene.getScene("GameScene").chests[0].loot[0].rarity = "red";
+  });
+  await page.keyboard.down("e");
+  await page.waitForFunction(() => window.__ASHEN_GAME__.scene.getScene("GameScene").chests[0]?.opened === true);
+  await page.keyboard.up("e");
+  await page.waitForFunction(() => window.__ASHEN_GAME__.scene.getScene("GameScene").lootPanelOpen === true);
+  const cancelledSearchItemId = await page.evaluate(
+    () => window.__ASHEN_GAME__.scene.getScene("GameScene").lootItemSearch?.itemId,
+  );
+  assert(cancelledSearchItemId, "Opening a chest did not automatically start searching its first unknown item");
+  await page.keyboard.press("Tab");
+  await page.waitForFunction(() => window.__ASHEN_GAME__.scene.getScene("GameScene").lootPanelOpen === false);
+  await new Promise((resolve) => setTimeout(resolve, 1_800));
+  assert(
+    await page.evaluate(
+      (itemId) => !window.__ASHEN_GAME__.scene.getScene("GameScene").chests[0].revealedItemIds.has(itemId),
+      cancelledSearchItemId,
+    ),
+    "Closing the loot panel did not cancel the active item search",
+  );
+
+  await page.goto(`${BASE_URL}/?qa=loot`);
+  await page.waitForFunction(() => window.__ASHEN_GAME__?.scene?.getScene("GameScene")?.lootPanelOpen === true);
+  await page.evaluate(() => document.querySelector("#game-shell")?.blur());
   await page.keyboard.press("Escape");
   await page.waitForFunction(() => window.__ASHEN_GAME__.scene.getScene("GameScene").lootPanelOpen === false);
 
@@ -167,20 +207,18 @@ try {
       window.__LIVE_MUTATIONS__ += 1;
     }).observe(status, { childList: true, characterData: true, subtree: true });
   });
-  const lootBefore = await page.evaluate(() => {
+  await page.waitForFunction(() => {
     const scene = window.__ASHEN_GAME__.scene.getScene("GameScene");
-    return { count: scene.activeLootChest.loot.length, itemId: scene.activeLootChest.loot[0].id };
+    const firstItem = scene.activeLootChest.loot[0];
+    return firstItem && scene.activeLootChest.revealedItemIds.has(firstItem.id);
   });
-  await page.keyboard.press("1");
-  await page.waitForFunction(
-    (itemId) => window.__ASHEN_GAME__.scene.getScene("GameScene").activeLootChest.revealedItemIds.has(itemId),
-    lootBefore.itemId,
-  );
-  await page.waitForFunction(() => document.querySelector("#game-status")?.textContent?.includes("发现"));
-  await new Promise((resolve) => setTimeout(resolve, 120));
   await page.evaluate(() => {
     document.querySelector("#game-status").textContent = "";
     window.__LIVE_MUTATIONS__ = 0;
+  });
+  const lootBefore = await page.evaluate(() => {
+    const scene = window.__ASHEN_GAME__.scene.getScene("GameScene");
+    return { count: scene.activeLootChest.loot.length, itemId: scene.activeLootChest.loot[0].id };
   });
   await page.keyboard.press("1");
   await page.waitForFunction(

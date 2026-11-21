@@ -297,6 +297,7 @@ export class GameScene extends Phaser.Scene {
       this.input.off(Phaser.Input.Events.POINTER_DOWN, this.handlePointerAttack, this);
       this.input.keyboard?.off("keydown", this.handlePanelKeyDown, this);
       this.game.events.off("input:inventory-toggle", this.handleInventoryShortcut, this);
+      this.game.events.off("input:loot-close", this.handleLootCloseShortcut, this);
       this.game.events.off("loot:take", this.handleLootTake, this);
       this.game.events.off("loadout:item-action", this.handleLoadoutItemAction, this);
       this.game.events.off("loadout:item-drop", this.handleLoadoutItemDrop, this);
@@ -306,6 +307,7 @@ export class GameScene extends Phaser.Scene {
       this.game.events.off("extraction:choose", this.handleExtractionChoice, this);
     });
     this.game.events.on("loot:take", this.handleLootTake, this);
+    this.game.events.on("input:loot-close", this.handleLootCloseShortcut, this);
     this.game.events.on("loadout:item-action", this.handleLoadoutItemAction, this);
     this.game.events.on("loadout:item-drop", this.handleLoadoutItemDrop, this);
     this.game.events.on("loadout:drag-state", this.handleLoadoutDragState, this);
@@ -446,6 +448,7 @@ export class GameScene extends Phaser.Scene {
     this.searchRequiresRelease = false;
     this.nearbyChest = undefined;
     this.lootPanelOpen = false;
+    this.registry.set("lootPanelOpen", false);
     this.extractionPanelOpen = false;
     this.activeLootChest = undefined;
     this.qaLootChest = undefined;
@@ -990,9 +993,11 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     this.lootPanelOpen = true;
+    this.registry.set("lootPanelOpen", true);
     this.pendingDiscard = undefined;
     this.activeLootChest = chest;
     this.emitLootState();
+    this.startNextLootItemSearch();
   }
 
   private openInventoryPanel(): void {
@@ -1001,6 +1006,7 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     this.lootPanelOpen = true;
+    this.registry.set("lootPanelOpen", true);
     this.pendingDiscard = undefined;
     this.activeLootChest = undefined;
     this.emitLootState();
@@ -1010,6 +1016,7 @@ export class GameScene extends Phaser.Scene {
     this.cancelLootItemSearch();
     this.loadoutDragActive = false;
     this.lootPanelOpen = false;
+    this.registry.set("lootPanelOpen", false);
     this.pendingDiscard = undefined;
     this.activeLootChest = undefined;
     this.game.events.emit("loot:state", {
@@ -1100,6 +1107,7 @@ export class GameScene extends Phaser.Scene {
       this.spawnLootRevealEcho(chest, item.rarity);
       this.emitLootState();
       this.showLoadoutMessage(`发现 ${item.name} · ${item.width}×${item.height}`);
+      this.time.delayedCall(220, () => this.startNextLootItemSearch());
       return;
     }
     if (time - this.lastLootSearchUiAt >= 80) {
@@ -1111,8 +1119,20 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  private startNextLootItemSearch(): void {
+    if (!this.lootPanelOpen || this.lootItemSearch || this.loadoutDragActive) return;
+    const chest = this.activeLootChest;
+    const nextItem = chest?.loot.find((item) => !chest.revealedItemIds.has(item.id));
+    if (chest && nextItem) this.startLootItemSearch(chest, nextItem);
+  }
+
   private handleLoadoutDragState(active: boolean): void {
     this.loadoutDragActive = active;
+    if (active) {
+      this.cancelLootItemSearch();
+      return;
+    }
+    this.startNextLootItemSearch();
   }
 
   private cancelLootItemSearch(): void {
@@ -1399,6 +1419,12 @@ export class GameScene extends Phaser.Scene {
     if (this.runState !== "playing" || this.extractionPanelOpen) return;
     if (this.lootPanelOpen) this.closeLootPanel();
     else this.openInventoryPanel();
+  }
+
+  private handleLootCloseShortcut(): void {
+    if (!this.lootPanelOpen) return;
+    this.searchRequiresRelease = true;
+    this.closeLootPanel();
   }
 
   private handlePanelKeyDown(event: KeyboardEvent): void {
