@@ -1,4 +1,4 @@
-import type { ItemInstance, ItemRarity, ItemTag } from "../domain/loadout";
+import { weaponDamagePerSecond, type ItemInstance, type ItemRarity, type ItemTag, type WeaponStats } from "../domain/loadout";
 
 export interface PresentableItem {
   definitionId?: string;
@@ -13,6 +13,88 @@ export interface ItemPresentation {
   rarityLabel: string;
   purpose: string;
   flavor: string;
+}
+
+export type WeaponComparisonDirection = "up" | "down" | "same" | "new";
+
+export interface WeaponComparisonRow {
+  key: "damage" | "attackSpeed" | "critChance" | "dps";
+  label: string;
+  currentValue: string;
+  candidateValue: string;
+  deltaText: string;
+  direction: WeaponComparisonDirection;
+}
+
+interface ComparisonMetric {
+  key: WeaponComparisonRow["key"];
+  label: string;
+  candidate: number;
+  current?: number;
+  decimals: number;
+  suffix?: string;
+}
+
+function roundTo(value: number, decimals: number): number {
+  const scale = 10 ** decimals;
+  return Math.round(value * scale) / scale;
+}
+
+function formatMetric(value: number, decimals: number, suffix = ""): string {
+  return `${value.toFixed(decimals)}${suffix}`;
+}
+
+export function compareWeaponStats(candidate: WeaponStats, current?: WeaponStats): WeaponComparisonRow[] {
+  const candidateDps = weaponDamagePerSecond({ weaponStats: candidate }) ?? 0;
+  const currentDps = current ? weaponDamagePerSecond({ weaponStats: current }) : undefined;
+  const metrics: ComparisonMetric[] = [
+    { key: "damage", label: "伤害", candidate: candidate.damage, current: current?.damage, decimals: 0 },
+    {
+      key: "attackSpeed",
+      label: "攻速",
+      candidate: 1000 / candidate.attackIntervalMs,
+      current: current ? 1000 / current.attackIntervalMs : undefined,
+      decimals: 2,
+      suffix: "/秒",
+    },
+    {
+      key: "critChance",
+      label: "暴击",
+      candidate: candidate.critChance * 100,
+      current: current ? current.critChance * 100 : undefined,
+      decimals: 0,
+      suffix: "%",
+    },
+    { key: "dps", label: "DPS", candidate: candidateDps, current: currentDps, decimals: 1 },
+  ];
+
+  return metrics.map((metric) => {
+    const candidateValue = roundTo(metric.candidate, metric.decimals);
+    const currentValue = metric.current === undefined ? undefined : roundTo(metric.current, metric.decimals);
+    if (currentValue === undefined) {
+      return {
+        key: metric.key,
+        label: metric.label,
+        currentValue: "—",
+        candidateValue: formatMetric(candidateValue, metric.decimals, metric.suffix),
+        deltaText: "新装备",
+        direction: "new",
+      };
+    }
+    const difference = roundTo(candidateValue - currentValue, metric.decimals);
+    const direction: WeaponComparisonDirection = difference > 0 ? "up" : difference < 0 ? "down" : "same";
+    const sign = difference > 0 ? "+" : "";
+    return {
+      key: metric.key,
+      label: metric.label,
+      currentValue: formatMetric(currentValue, metric.decimals, metric.suffix),
+      candidateValue: formatMetric(candidateValue, metric.decimals, metric.suffix),
+      deltaText: direction === "same"
+        ? "—"
+        : `${direction === "up" ? "↑" : "↓"} ${sign}${formatMetric(difference, metric.decimals, metric.suffix)}`,
+      direction,
+    };
+  });
 }
 
 const FLAVOR_BY_DEFINITION: Record<string, string> = {

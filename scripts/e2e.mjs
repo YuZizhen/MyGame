@@ -533,7 +533,7 @@ try {
     Object.assign(item, {
       name: "试作锋刃",
       tags: ["weapon", "valuable"],
-      weaponStats: { damage: 36, attackIntervalMs: 450, critChance: 0.04 },
+      weaponStats: { damage: 40, attackIntervalMs: 600, critChance: 0.08 },
     });
     scene.activeLootChest.revealedItemIds.add(item.id);
     scene.emitLootState();
@@ -542,6 +542,29 @@ try {
     const hud = window.__ASHEN_GAME__.scene.getScene("HudScene");
     return hud.lootObjects.some((object) => typeof object.text === "string" && object.text.includes("预计 ↑"));
   });
+  await page.mouse.click(270, 222);
+  await page.waitForFunction(() => {
+    const game = window.__ASHEN_GAME__;
+    const texts = game.scene.getScene("HudScene").lootObjects
+      .filter((object) => typeof object.text === "string")
+      .map((object) => object.text);
+    return game.registry.get("itemDetailOpen") === true
+      && ["伤害", "攻速", "暴击", "DPS"].every((label) => texts.includes(label))
+      && texts.some((text) => text.startsWith("↑"))
+      && texts.some((text) => text.startsWith("↓"));
+  });
+  const weaponComparisonColors = await page.evaluate(() => window.__ASHEN_GAME__.scene
+    .getScene("HudScene").lootObjects
+    .filter((object) => typeof object.text === "string" && (object.text.startsWith("↑") || object.text.startsWith("↓")))
+    .map((object) => ({ text: object.text, color: object.style.color })));
+  assert(
+    weaponComparisonColors.some((entry) => entry.text.startsWith("↑") && entry.color === "#69c58f"),
+    "Weapon improvements are not shown with a green up arrow",
+  );
+  assert(
+    weaponComparisonColors.some((entry) => entry.text.startsWith("↓") && entry.color === "#d87972"),
+    "Weapon regressions are not shown with a red down arrow",
+  );
 
   await page.goto(`${BASE_URL}/?qa=extract`);
   await page.waitForFunction(() => window.__ASHEN_GAME__?.scene?.getScene("GameScene")?.extractionPanelOpen === true);

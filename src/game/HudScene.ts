@@ -10,7 +10,7 @@ import {
   type ItemInstance,
   type StoredContainerSlot,
 } from "../domain/loadout";
-import { describeItem } from "./itemPresentation";
+import { compareWeaponStats, describeItem, type WeaponComparisonDirection } from "./itemPresentation";
 import type {
   ExtractionOutcomeUi,
   ExtractionPreview,
@@ -648,18 +648,18 @@ export class HudScene extends Phaser.Scene {
       color: "#748288",
       wordWrap: { width: panelWidth - 40, useAdvancedWrap: true },
     }).setDepth(152);
-    const valueNote = this.add.text(
-      panelX + 20,
-      panelY + 230,
-      this.detailValueText(item, loadout.weapon),
-      {
+    const detailObjects: Phaser.GameObjects.GameObject[] = [];
+    if (item.weaponStats) {
+      detailObjects.push(...this.drawWeaponComparison(panelX, panelY, item, loadout.weapon));
+    } else {
+      detailObjects.push(this.add.text(panelX + 20, panelY + 230, this.detailValueText(item), {
         fontFamily: "Microsoft YaHei, sans-serif",
-        fontSize: item.weaponStats ? "14px" : "13px",
+        fontSize: "13px",
         lineSpacing: 7,
-        color: item.weaponStats ? "#dce3e4" : "#9facb0",
+        color: "#9facb0",
         wordWrap: { width: panelWidth - 40, useAdvancedWrap: true },
-      },
-    ).setDepth(152);
+      }).setDepth(152));
+    }
 
     const close = this.add.text(panelX + panelWidth - 18, panelY + 14, "×", {
       fontFamily: "Microsoft YaHei, sans-serif",
@@ -708,21 +708,79 @@ export class HudScene extends Phaser.Scene {
         });
       }
     }
-    this.lootObjects.push(panel, blocker, icon, title, meta, purposeLabel, purpose, flavor, valueNote, close);
+    this.lootObjects.push(panel, blocker, icon, title, meta, purposeLabel, purpose, flavor, ...detailObjects, close);
   }
 
-  private detailValueText(item: LootItem | ItemInstance, currentWeapon: ItemInstance | undefined): string {
-    if (!item.weaponStats) {
-      const corruption = "corruption" in item && item.corruption > 0 ? ` · 腐化 ${item.corruption}` : "";
-      return `占用 ${item.width}×${item.height} 格 · 撤离结算价值 ${item.value}${corruption}`;
-    }
-    const dps = weaponDamagePerSecond(item) ?? 0;
-    const currentDps = currentWeapon ? weaponDamagePerSecond(currentWeapon) : undefined;
-    const delta = currentDps && currentWeapon?.id !== item.id
-      ? Math.round(((dps / currentDps) - 1) * 100)
-      : undefined;
-    const comparison = delta === undefined ? "当前装备或无可比武器" : delta === 0 ? "预计输出持平" : `预计输出 ${delta > 0 ? "↑" : "↓"}${Math.abs(delta)}%`;
-    return `伤害 ${item.weaponStats.damage}\n攻击 ${((1000 / item.weaponStats.attackIntervalMs)).toFixed(2)}/秒\n暴击 ${Math.round(item.weaponStats.critChance * 100)}% · DPS ${dps.toFixed(1)}\n${comparison}`;
+  private detailValueText(item: LootItem | ItemInstance): string {
+    const corruption = "corruption" in item && item.corruption > 0 ? ` · 腐化 ${item.corruption}` : "";
+    return `占用 ${item.width}×${item.height} 格 · 撤离结算价值 ${item.value}${corruption}`;
+  }
+
+  private drawWeaponComparison(
+    panelX: number,
+    panelY: number,
+    item: LootItem | ItemInstance,
+    currentWeapon: ItemInstance | undefined,
+  ): Phaser.GameObjects.GameObject[] {
+    if (!item.weaponStats) return [];
+    const sameWeapon = currentWeapon?.id === item.id;
+    const rows = compareWeaponStats(item.weaponStats, currentWeapon?.weaponStats);
+    const currentName = currentWeapon?.name ?? "未装备";
+    const compactCurrentName = currentName.length > 10 ? `${currentName.slice(0, 9)}…` : currentName;
+    const objects: Phaser.GameObjects.GameObject[] = [];
+    const addText = (x: number, y: number, text: string, style: Phaser.Types.GameObjects.Text.TextStyle) => {
+      const object = this.add.text(x, y, text, style).setDepth(152);
+      objects.push(object);
+      return object;
+    };
+
+    addText(panelX + 20, panelY + 222, `当前：${compactCurrentName}${sameWeapon ? " · 已装备" : ""}`, {
+      fontFamily: "Microsoft YaHei, sans-serif",
+      fontSize: "12px",
+      color: "#9facb0",
+    });
+    const headerStyle: Phaser.Types.GameObjects.Text.TextStyle = {
+      fontFamily: "Microsoft YaHei, sans-serif",
+      fontSize: "11px",
+      color: "#6f7c81",
+    };
+    addText(panelX + 20, panelY + 244, "属性", headerStyle);
+    addText(panelX + 126, panelY + 244, "所选", headerStyle).setOrigin(1, 0);
+    addText(panelX + 194, panelY + 244, "当前", headerStyle).setOrigin(1, 0);
+    addText(panelX + 270, panelY + 244, "差值", headerStyle).setOrigin(1, 0);
+
+    rows.forEach((row, index) => {
+      const y = panelY + 264 + index * 22;
+      addText(panelX + 20, y, row.label, {
+        fontFamily: "Microsoft YaHei, sans-serif",
+        fontSize: "12px",
+        color: "#9ba7ab",
+      });
+      addText(panelX + 126, y, row.candidateValue, {
+        fontFamily: "Consolas, Microsoft YaHei, monospace",
+        fontSize: "12px",
+        color: "#e0e6e7",
+      }).setOrigin(1, 0);
+      addText(panelX + 194, y, row.currentValue, {
+        fontFamily: "Consolas, Microsoft YaHei, monospace",
+        fontSize: "12px",
+        color: "#93a0a5",
+      }).setOrigin(1, 0);
+      const deltaText = row.direction === "new" && index > 0 ? "—" : row.deltaText;
+      addText(panelX + 270, y, deltaText, {
+        fontFamily: "Consolas, Microsoft YaHei, monospace",
+        fontSize: "12px",
+        fontStyle: row.direction === "same" ? "normal" : "bold",
+        color: this.weaponComparisonColor(row.direction),
+      }).setOrigin(1, 0);
+    });
+    return objects;
+  }
+
+  private weaponComparisonColor(direction: WeaponComparisonDirection): string {
+    if (direction === "up" || direction === "new") return "#69c58f";
+    if (direction === "down") return "#d87972";
+    return "#879397";
   }
 
   private createDetailButton(

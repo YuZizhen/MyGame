@@ -51,6 +51,7 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - [x] Added item detail windows with category, rarity, size, value, purpose, flavor text, weapon stats, and explicit context actions.
 - [x] Added confirmed permanent discard from the standalone loadout and safe return when a chest is open.
 - [x] Repositioned item details as narrow contextual panels beside items, made `Esc` close details first, and added race-free double-click pickup.
+- [x] Added per-stat weapon comparison for damage, attack speed, critical chance, and expected DPS with independent gain/loss indicators.
 
 ## Active plan
 
@@ -126,6 +127,8 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 | 2026-11-22 | Item detail actions | `npm run test:e2e` | Passed; 9 Edge scenarios including detail rendering, button pickup, container move, confirmed permanent discard, and all previous regressions |
 | 2026-11-22 | Contextual item details | `npm run check` | Passed; 57 tests and production build |
 | 2026-11-22 | Contextual item details | `npm run test:e2e` | Passed; 10 Edge scenarios including adjacent panel sizing, detail-first `Esc`, race-free double-click pickup, and all previous regressions |
+| 2026-11-22 | Weapon comparison | `npm run check` | Passed; 59 tests and production build |
+| 2026-11-22 | Weapon comparison | `npm run test:e2e` | Passed; 10 Edge scenarios including mixed green improvements and red regressions in the same weapon detail |
 
 ## Commits
 
@@ -146,4 +149,5 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - `a9e0e8a` — `fix: prevent loot progress render crashes`
 - `4118eaf` — `fix: ignore destroyed mobs in paused panels`
 - `c6e9f48` — `feat: add actionable item detail windows`
+- `590a64c` — `feat: refine contextual item interactions`
 
