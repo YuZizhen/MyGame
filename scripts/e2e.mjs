@@ -243,6 +243,38 @@ try {
     "A recoverable sleeping game loop incorrectly raised the diagnostic overlay",
   );
 
+  await page.goto(`${BASE_URL}/?qa=loot`);
+  await page.waitForFunction(() => window.__ASHEN_GAME__?.scene?.getScene("GameScene")?.lootPanelOpen === true);
+  const frameBeforeDeadMobCleanup = await page.evaluate(() => {
+    const game = window.__ASHEN_GAME__;
+    const scene = game.scene.getScene("GameScene");
+    const mob = scene.mobs.find((candidate) => !candidate.isBoss && !candidate.dead);
+    scene.killMob(mob);
+    return game.loop.frame;
+  });
+  await page.waitForTimeout(700);
+  assert(
+    await page.evaluate(
+      (frame) => window.__ASHEN_GAME__.loop.frame > frame
+        && document.querySelector("#runtime-diagnostics")?.hidden === true,
+      frameBeforeDeadMobCleanup,
+    ),
+    "A destroyed dead-mob body stopped the loot-panel game loop",
+  );
+
+  await page.goto(`${BASE_URL}/?qa=exit`);
+  await page.waitForFunction(() => {
+    const scene = window.__ASHEN_GAME__?.scene?.getScene("GameScene");
+    return scene?.bossDefeated === true;
+  });
+  await page.waitForTimeout(1_000);
+  await page.evaluate(() => window.__ASHEN_GAME__.scene.getScene("GameScene").openExtractionPanel());
+  await page.waitForFunction(() => window.__ASHEN_GAME__.scene.getScene("GameScene").extractionPanelOpen === true);
+  assert(
+    await page.evaluate(() => document.querySelector("#runtime-diagnostics")?.hidden === true),
+    "A destroyed boss body stopped the extraction-panel game loop",
+  );
+
   await page.goto(`${BASE_URL}/?qa=loot&renderer=canvas`);
   await page.waitForFunction(() => {
     const game = window.__ASHEN_GAME__;
@@ -400,7 +432,7 @@ try {
   assert(runtimeErrors.length === 0, `Browser runtime errors: ${runtimeErrors.join(" | ")}`);
 
   await context.close();
-  process.stdout.write("Browser regression: 6 scenarios passed\n");
+  process.stdout.write("Browser regression: 8 scenarios passed\n");
 } finally {
   try {
     if (browser) await browser.close();

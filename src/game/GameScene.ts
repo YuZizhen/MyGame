@@ -335,7 +335,7 @@ export class GameScene extends Phaser.Scene {
 
     if (this.extractionPanelOpen) {
       this.player.setVelocity(0, 0);
-      this.mobs.forEach((mob) => mob.sprite.setVelocity(0, 0));
+      this.stopActiveMobs("extraction-panel");
       return;
     }
 
@@ -367,7 +367,7 @@ export class GameScene extends Phaser.Scene {
 
     if (this.lootPanelOpen) {
       this.player.setVelocity(0, 0);
-      this.mobs.forEach((mob) => mob.sprite.setVelocity(0, 0));
+      this.stopActiveMobs("loot-panel");
       if (this.loadoutDragActive && !this.input.activePointer.isDown) this.loadoutDragActive = false;
       this.updateLootItemSearch(time);
       this.startNextLootItemSearch();
@@ -1599,7 +1599,7 @@ export class GameScene extends Phaser.Scene {
       alpha: 0,
       scale: 0.7,
       duration: 320,
-      onComplete: () => mob.sprite.destroy(),
+      onComplete: () => this.destroyMobSprite(mob),
     });
   }
 
@@ -1645,6 +1645,25 @@ export class GameScene extends Phaser.Scene {
         }
       }
     }
+  }
+
+  private stopActiveMobs(reason: "loot-panel" | "extraction-panel"): void {
+    this.mobs.forEach((mob, index) => {
+      const sprite = mob?.sprite;
+      if (!sprite) {
+        throw new Error(`[MOB_SPRITE_MISSING] reason=${reason}, index=${index}, kind=${mob?.kind ?? "unknown"}`);
+      }
+      if (mob.dead || !sprite.active) return;
+      if (!sprite.body) {
+        throw new Error(`[MOB_PHYSICS_BODY_MISSING] reason=${reason}, index=${index}, kind=${mob.kind}, dead=${mob.dead}, active=${sprite.active}`);
+      }
+      sprite.setVelocity(0, 0);
+    });
+  }
+
+  private destroyMobSprite(mob: MobState): void {
+    this.mobs = this.mobs.filter((candidate) => candidate !== mob);
+    if (mob.sprite.active) mob.sprite.destroy();
   }
 
   private showEnemyTelegraph(mob: MobState): void {
@@ -1900,7 +1919,7 @@ export class GameScene extends Phaser.Scene {
       alpha: 0,
       scale: 1.25,
       duration: 800,
-      onComplete: () => this.boss.sprite.destroy(),
+      onComplete: () => this.destroyMobSprite(this.boss),
     });
 
     const exitX = (this.dungeon.bossRoom.centerX + 0.5) * TILE_SIZE;

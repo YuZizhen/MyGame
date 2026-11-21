@@ -47,6 +47,7 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - [x] Added focus-independent `E`/`Esc`/`Tab` close handling and a visible mouse close control.
 - [x] Fixed the zero-width loot progress bar that produced an infinite render transform and terminated Phaser's RAF chain at 0%.
 - [x] Added visible runtime diagnostics for stalled frames/search clocks, invalid search state, window errors, and emergency recovery.
+- [x] Removed destroyed enemies from runtime state and prevented dead or missing physics bodies from crashing loot and extraction panels.
 
 ## Active plan
 
@@ -117,6 +118,7 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 | 2026-11-21 | Container interaction recovery | `npm run test:e2e` | Passed; 5 Edge scenarios cover automatic sequential identification, search cancellation, mouse/keyboard/focus-independent close paths, pickup, loadout drag, and extraction |
 | 2026-11-21 | Loot render deadlock | `npm run check` | Passed; 54 tests and production build |
 | 2026-11-21 | Loot render deadlock | `npm run test:e2e` | Passed; 6 Edge scenarios verify finite progress transforms in default and Canvas renderers, forced loop sleep recovery, search/pickup/close, loadout drag, and extraction with no page errors |
+| 2026-11-21 | Dead-mob panel crash | `npm run check:full` | Passed; 54 tests, production build, and 8 Edge scenarios including loot after normal-mob destruction and extraction after Boss destruction |
 
 ## Commits
 
@@ -134,4 +136,5 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - `fdd4636` — `feat: add searchable container interactions`
 - `3a4a46b` — `feat: add comparable weapon attributes`
 - `95127b5` — `fix: prevent container interaction deadlocks`
+- `a9e0e8a` — `fix: prevent loot progress render crashes`
 
