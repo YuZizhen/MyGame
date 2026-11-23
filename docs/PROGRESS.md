@@ -63,6 +63,8 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - [x] Added a real tactical pause menu with resume, persistent audio settings, controls, and game introduction pages.
 - [x] Moved healing off the overloaded interact key: `Q` now consumes one of two starting potions and restores up to 35 HP.
 - [x] Paused physics, scene time, tweens, player input, enemies, and active searches while the Esc menu is open.
+- [x] Added live loadout-corruption tracking to the combat HUD and pause overview with threshold-aware coloring.
+- [x] Removed the persistent bottom control legend now that controls live in the Esc settings page, restoring the lower combat view.
 
 ## Active plan
 
@@ -156,6 +158,8 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 | 2026-11-23 | Pause menu and potions | `npm run check` | Passed; 67 tests, audio cue coverage, strict TypeScript, and production build |
 | 2026-11-23 | Pause menu and potions | `npm run test:e2e` | Passed; 12 Edge scenarios including Esc priority, frozen physics/time, settings, guide, volume changes, Q healing, and all previous regressions |
 | 2026-11-23 | Pause menu and potions | Headless Edge screenshots at 1280×720 | Passed; overview, settings, and game-introduction pages visually inspected over the paused dungeon |
+| 2026-11-23 | Corruption HUD cleanup | `npm run check` + `npm run test:e2e` | Passed; 67 tests, production build, and 12 Edge scenarios including live corruption and absence of the bottom control overlay |
+| 2026-11-23 | Corruption HUD cleanup | Headless Edge screenshot at 1280×720 | Passed; corruption 27 renders clearly beside health while the lower dungeon view remains unobstructed |
 
 ## Commits
 
@@ -180,4 +184,5 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - `de6f92f` — `feat: compare weapon stats in item details`
 - `6c6044f` — `feat: generate varied ashen dungeon terrain`
 - `c9d7b5c` — `feat: add functional ashen hub`
+- `a6b9b99` — `feat: add pause settings and healing`
 

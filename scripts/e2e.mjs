@@ -112,6 +112,7 @@ try {
   });
   const context = await browser.newContext({ viewport: { width: 1280, height: 720 }, hasTouch: true });
   const page = await context.newPage();
+  page.setDefaultTimeout(45_000);
   const runtimeErrors = [];
   page.on("pageerror", (error) => runtimeErrors.push(error.message));
 
@@ -128,6 +129,11 @@ try {
   await page.waitForFunction(() => window.__ASHEN_GAME__.scene.getScene("HubScene").view === "home");
   await page.keyboard.press("Enter");
   await page.waitForFunction(() => window.__ASHEN_GAME__?.scene?.isActive("GameScene"));
+  assert(
+    await page.evaluate(() => !window.__ASHEN_GAME__.scene.getScene("HudScene").children.list
+      .some((object) => typeof object.text === "string" && object.text.startsWith("WASD 移动"))),
+    "The persistent bottom control guide still blocks the combat view",
+  );
   await page.keyboard.press("Escape");
   await page.waitForFunction(() => window.__ASHEN_GAME__?.registry?.get("pauseMenuOpen") === true);
   const pausedState = await page.evaluate(() => {
@@ -157,12 +163,14 @@ try {
   await page.evaluate(() => {
     const scene = window.__ASHEN_GAME__.scene.getScene("GameScene");
     scene.hp = 50;
+    scene.loadout.weapon.corruption = 12;
     scene.emitHudState();
   });
   await page.keyboard.press("q");
   await page.waitForFunction(() => {
     const scene = window.__ASHEN_GAME__.scene.getScene("GameScene");
-    return scene.hp === 85 && scene.potions === 1;
+    const hud = window.__ASHEN_GAME__.scene.getScene("HudScene");
+    return scene.hp === 85 && scene.potions === 1 && hud.hudState.corruption === 12 && hud.corruptionText.text === "腐化\n12";
   });
   const touchAllowed = await page.evaluate(() => {
     const canvas = document.querySelector("canvas");

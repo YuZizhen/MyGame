@@ -9,6 +9,7 @@ import {
   discardStoredItem,
   equipWeaponFromContainer,
   listContainerItems,
+  loadoutCorruption,
   moveStoredItem,
   moveStoredItemToPosition,
   rotateStoredItem,
@@ -2460,6 +2461,7 @@ export class GameScene extends Phaser.Scene {
       bossMaxHp: this.boss.maxHp,
       bossActive: this.bossEncounterActive && !this.bossDefeated,
       potions: this.potions,
+      corruption: loadoutCorruption(this.loadout),
       rollReady: this.time.now >= this.rollReadyAt,
       interactionPrompt: this.lootPanelOpen
         ? "Tab / Esc 关闭行囊"

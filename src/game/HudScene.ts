@@ -35,6 +35,7 @@ const DEFAULT_HUD: HudState = {
   bossMaxHp: 0,
   bossActive: false,
   potions: 2,
+  corruption: 0,
   rollReady: true,
   interactionPrompt: "",
   inventoryUsed: 0,
@@ -80,6 +81,7 @@ export class HudScene extends Phaser.Scene {
   private minimapGraphics!: Phaser.GameObjects.Graphics;
   private objectiveText!: Phaser.GameObjects.Text;
   private statusText!: Phaser.GameObjects.Text;
+  private corruptionText!: Phaser.GameObjects.Text;
   private profileText!: Phaser.GameObjects.Text;
   private bossNameText!: Phaser.GameObjects.Text;
   private bannerText!: Phaser.GameObjects.Text;
@@ -139,6 +141,16 @@ export class HudScene extends Phaser.Scene {
       strokeThickness: 4,
     });
 
+    this.corruptionText = this.add.text(362, 74, "", {
+      fontFamily: "Consolas, Microsoft YaHei, monospace",
+      fontSize: "13px",
+      fontStyle: "bold",
+      color: "#78858a",
+      stroke: "#080b0f",
+      strokeThickness: 4,
+      align: "center",
+    }).setOrigin(0.5);
+
     this.profileText = this.add.text(34, 149, "", {
       fontFamily: "Microsoft YaHei, sans-serif",
       fontSize: "14px",
@@ -157,16 +169,6 @@ export class HudScene extends Phaser.Scene {
       })
       .setOrigin(0.5)
       .setVisible(false);
-
-    this.add
-      .text(640, 686, "WASD 移动 · 鼠标左键 / 空格 挥砍 · Shift 翻滚 · E 搜索 · Q 药剂 · Tab 行囊 · Esc 暂停", {
-        fontFamily: "Microsoft YaHei, sans-serif",
-        fontSize: "16px",
-        color: "#aeb9bc",
-        stroke: "#05070a",
-        strokeThickness: 5,
-      })
-      .setOrigin(0.5);
 
     this.bannerText = this.add
       .text(640, 138, "", {
@@ -379,7 +381,7 @@ export class HudScene extends Phaser.Scene {
   private drawPauseOverview(): void {
     this.addPauseText(545, 205, "灰烬地穴", { fontSize: "20px", fontStyle: "bold", color: "#e2d4b5" });
     this.addPauseText(545, 244, `探索进度  ${this.hudState.roomsExplored} / ${this.hudState.totalRooms}`, { fontSize: "14px", color: "#c7d0d2" });
-    this.addPauseText(545, 276, `生命  ${Math.ceil(this.hudState.hp)} / ${this.hudState.maxHp}    随身药剂  ${this.hudState.potions}`, { fontSize: "14px", color: "#c7d0d2" });
+    this.addPauseText(545, 276, `生命  ${Math.ceil(this.hudState.hp)} / ${this.hudState.maxHp}    随身药剂  ${this.hudState.potions}    腐化  ${this.hudState.corruption}`, { fontSize: "14px", color: "#c7d0d2" });
     this.addPauseText(545, 318, "当前目标", { fontSize: "12px", fontStyle: "bold", color: "#d3923c" });
     this.addPauseText(545, 345, this.hudState.objective, {
       fontSize: "14px", color: "#aeb8bb", wordWrap: { width: 335, useAdvancedWrap: true }, lineSpacing: 5,
@@ -1495,6 +1497,9 @@ export class HudScene extends Phaser.Scene {
     this.statusText.setText(
       `生命 ${Math.ceil(state.hp)} / ${state.maxHp}   ·   行囊 ${state.inventoryUsed}/${state.inventoryCapacity}\n探索 ${state.roomsExplored}/${state.totalRooms}   ·   随身药剂 ${state.potions}   ·   翻滚 ${state.rollReady ? "就绪" : "冷却"}`,
     );
+    this.corruptionText
+      .setText(`腐化\n${state.corruption}`)
+      .setColor(state.corruption >= 40 ? "#e06458" : state.corruption >= 20 ? "#bd8df0" : state.corruption > 0 ? "#67b7ed" : "#78858a");
     const profileStatus =
       this.profileSummary.status === "recovered"
         ? " · 档案已恢复"

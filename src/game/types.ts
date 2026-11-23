@@ -120,6 +120,7 @@ export interface HudState {
   bossMaxHp: number;
   bossActive: boolean;
   potions: number;
+  corruption: number;
   rollReady: boolean;
   interactionPrompt: string;
   inventoryUsed: number;
