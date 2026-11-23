@@ -269,8 +269,8 @@ export class HudScene extends Phaser.Scene {
       this.resultText
         .setText(
           won
-            ? `${successText}\n\n按 R 再次进入地穴`
-            : "你倒在了灰烬地穴\n本次探索结束\n\n按 R 重新挑战",
+            ? `${successText}\n\n按 R 返回灰烬前厅`
+            : "你倒在了灰烬地穴\n本次探索结束\n\n按 R 返回灰烬前厅",
         )
         .setColor(won ? "#f4d69b" : "#d88479")
         .setVisible(true);

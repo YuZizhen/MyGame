@@ -55,6 +55,11 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - [x] Added seeded procedural room silhouettes: rectangular, chamfered, cross-shaped, cavern, and Boss arena layouts.
 - [x] Added non-walkable lava borders, sparse collidable cinder-rock formations, ash details, and obstacle-aware enemy steering.
 - [x] Added safe chest placement, enemy/chest spawn separation, disconnected-floor pruning, and exploration-radius-only minimap reveal.
+- [x] Added a dedicated gray-ash hub with exploration, warehouse, and NPC gray-market views.
+- [x] Added profile credits, explicit v1-to-v2 migration, category-aware sell rates, and atomic warehouse sales.
+- [x] Routed normal startup through the hub while preserving direct QA deep links into combat.
+- [x] Returned completed or failed runs to the hub without leaving the combat HUD or global shortcuts active.
+- [x] Prevented free zero-value starter equipment from entering or inflating the warehouse ledger.
 
 ## Active plan
 
@@ -81,6 +86,7 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 
 ### P2 — Expansion
 
+- [x] Add a functional hub, warehouse browser, recent-extraction summary, and local NPC buyback market.
 - [x] Add deterministic QA seeds, randomized playthrough seeds, and irregular room silhouettes.
 - [ ] Add functional room types, shortcuts, and early extraction.
 - [ ] Add insurance storage and recovery rules.
@@ -96,6 +102,8 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - The production bundle still reports a Phaser-driven chunk-size warning.
 - Enemy obstacle avoidance is lightweight steering rather than full pathfinding; future dense or concave obstacle layouts require A* or a flow field.
 - Lava is currently a clearly non-walkable boundary material, not a damage floor.
+- The “交易行” is intentionally an offline NPC buyback market; real player listings require accounts, a trusted backend, and server-side validation.
+- Warehouse equipment cannot be deployed into a run yet; that feature needs an atomic active-run ledger to avoid duplication and incorrect loss handling.
 
 ## Verification log
 
@@ -138,6 +146,9 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 | 2026-11-23 | Ashen terrain generation | `npm run check` | Passed; 62 tests, 64-seed connectivity coverage, and production build |
 | 2026-11-23 | Ashen terrain generation | `npm run test:e2e` | Passed; 10 Edge scenarios including chest search, loot, Boss, extraction, minimap, and runtime-error checks on the new terrain |
 | 2026-11-23 | Ashen terrain generation | Headless Edge screenshots at seed `20261122` | Passed; lava boundaries, cinder-rock blockers, floor continuity, and minimap silhouettes visually inspected |
+| 2026-11-23 | Gray-ash hub and market | `npm run check` | Passed; 67 tests including v1 profile migration, atomic sales, pricing priority, zero-value starter exclusion, and production build |
+| 2026-11-23 | Gray-ash hub and market | `npm run test:e2e` | Passed; 11 Edge scenarios including hub navigation, exploration start, previous combat/loot flows, extraction, and clean return to hub |
+| 2026-11-23 | Gray-ash hub and market | Headless Edge screenshots at 1280×720 | Passed; home, empty/filled warehouse, and empty/filled gray-market layouts visually inspected |
 
 ## Commits
 
@@ -160,4 +171,5 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - `c6e9f48` — `feat: add actionable item detail windows`
 - `590a64c` — `feat: refine contextual item interactions`
 - `de6f92f` — `feat: compare weapon stats in item details`
+- `6c6044f` — `feat: generate varied ashen dungeon terrain`
 

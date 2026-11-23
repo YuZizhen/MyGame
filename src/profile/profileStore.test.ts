@@ -10,13 +10,18 @@ import {
 } from "../domain/loadout";
 import {
   PROFILE_CORRUPT_BACKUP_KEY,
+  PROFILE_SCHEMA_VERSION,
   PROFILE_STORAGE_KEY,
   PROFILE_TEMP_KEY,
+  MARKET_SELL_RATES,
   applyExtraction,
   commitExtraction,
   createDefaultProfile,
+  commitWarehouseSale,
   loadProfile,
   saveProfile,
+  sellWarehouseItem,
+  warehouseSaleValue,
   type StorageAdapter,
 } from "./profileStore";
 
@@ -100,6 +105,20 @@ describe("profile persistence", () => {
 
     expect(result.status).toBe("loaded");
     expect(result.profile.warehouse[0].weaponStats).toBeUndefined();
+  });
+
+  it("migrates schema version 1 profiles with starting credits", () => {
+    const storage = new MemoryStorage();
+    const legacy = { ...createDefaultProfile(), schemaVersion: 1, warehouse: [item("legacy", 12)] };
+    delete (legacy as Partial<typeof legacy>).credits;
+    storage.values.set(PROFILE_STORAGE_KEY, JSON.stringify(legacy));
+
+    const result = loadProfile(storage);
+
+    expect(result.status).toBe("loaded");
+    expect(result.profile.schemaVersion).toBe(PROFILE_SCHEMA_VERSION);
+    expect(result.profile.credits).toBe(100);
+    expect(result.profile.warehouse[0].id).toBe("legacy");
   });
 
   it.each([
@@ -221,6 +240,17 @@ describe("extraction commits", () => {
     expect(profile.warehouse.find((entry) => entry.id === "sword")?.weaponStats?.damage).toBe(30);
   });
 
+  it("does not store or count free zero-value starter equipment", () => {
+    const loadout = populatedLoadout();
+    loadout.weapon = { ...loadout.weapon!, value: 0 };
+
+    const profile = applyExtraction(createDefaultProfile(), settleExtraction(loadout, "normal"), 100, "run-free-kit");
+
+    expect(profile.warehouse.map((entry) => entry.id)).toEqual(["medicine", "red-cargo"]);
+    expect(profile.lastExtraction?.retainedItemIds).toEqual(["medicine", "red-cargo"]);
+    expect(profile.lastExtraction?.retainedValue).toBe(915);
+  });
+
   it("does not store the dropped backpack cargo", () => {
     const storage = new MemoryStorage();
     const result = commitExtraction(
@@ -256,5 +286,45 @@ describe("extraction commits", () => {
       expect(repeated.profile.totalExtractedValue).toBe(935);
       expect(repeated.profile.processedExtractionIds).toEqual(["run-1"]);
     }
+  });
+});
+
+describe("warehouse trading", () => {
+  it("sells one exact warehouse instance at the fixed market rate", () => {
+    const profile = {
+      ...createDefaultProfile(),
+      credits: 10,
+      warehouse: [item("keep", 100), item("sell", 101)],
+    };
+
+    const result = sellWarehouseItem(profile, "sell");
+
+    expect(MARKET_SELL_RATES.valuable).toBe(0.55);
+    expect(warehouseSaleValue(profile.warehouse[1])).toBe(55);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.payout).toBe(55);
+      expect(result.profile.credits).toBe(65);
+      expect(result.profile.warehouse.map((entry) => entry.id)).toEqual(["keep"]);
+      expect(profile.warehouse).toHaveLength(2);
+    }
+  });
+
+  it("commits a sale atomically and cannot sell the same item twice", () => {
+    const storage = new MemoryStorage();
+    saveProfile(storage, { ...createDefaultProfile(), warehouse: [item("sell-once", 80)] });
+
+    const first = commitWarehouseSale(storage, "sell-once");
+    const repeated = commitWarehouseSale(storage, "sell-once");
+
+    expect(first.ok).toBe(true);
+    expect(repeated).toEqual({ ok: false, error: "item_not_found" });
+    expect(loadProfile(storage).profile).toMatchObject({ credits: 144, warehouse: [] });
+  });
+
+  it("uses tag priority so equipment and red cargo cannot claim the valuable rate", () => {
+    expect(warehouseSaleValue({ ...item("weapon", 100), tags: ["weapon", "valuable"] })).toBe(35);
+    expect(warehouseSaleValue({ ...item("medicine", 100), tags: ["medicine"] })).toBe(45);
+    expect(warehouseSaleValue({ ...item("red", 100), tags: ["red_cargo", "valuable"] })).toBe(35);
   });
 });

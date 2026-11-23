@@ -4,7 +4,13 @@ import {
   type ItemInstance,
 } from "../domain/loadout";
 
-export const PROFILE_SCHEMA_VERSION = 1 as const;
+export const PROFILE_SCHEMA_VERSION = 2 as const;
+export const MARKET_SELL_RATES = {
+  redCargo: 0.35,
+  equipment: 0.35,
+  supplies: 0.45,
+  valuable: 0.55,
+} as const;
 export const PROFILE_STORAGE_KEY = "ashen-vault.profile";
 export const PROFILE_TEMP_KEY = "ashen-vault.profile.pending";
 export const PROFILE_CORRUPT_BACKUP_KEY = "ashen-vault.profile.corrupt";
@@ -28,6 +34,7 @@ export interface PlayerProfile {
   revision: number;
   successfulExtractions: number;
   totalExtractedValue: number;
+  credits: number;
   processedExtractionIds: readonly string[];
   warehouse: readonly ItemInstance[];
   lastExtraction?: ExtractionRecord;
@@ -49,6 +56,10 @@ export interface ProfileLoadResult {
 export type ProfileWriteResult =
   | { ok: true; profile: PlayerProfile; loadStatus: ProfileLoadStatus }
   | { ok: false; error: "storage_unavailable" | "unsupported_version" };
+
+export type WarehouseSaleResult =
+  | { ok: true; profile: PlayerProfile; payout: number; item: ItemInstance; loadStatus?: ProfileLoadStatus }
+  | { ok: false; error: "item_not_found" | "storage_unavailable" | "unsupported_version" };
 
 type ParseResult =
   | { ok: true; profile: PlayerProfile }
@@ -138,6 +149,7 @@ export function createDefaultProfile(): PlayerProfile {
     revision: 0,
     successfulExtractions: 0,
     totalExtractedValue: 0,
+    credits: 100,
     processedExtractionIds: [],
     warehouse: [],
   };
@@ -157,14 +169,18 @@ function parseProfile(raw: string): ParseResult {
   ) {
     return { ok: false, error: "unsupported" };
   }
-  if (value.schemaVersion !== PROFILE_SCHEMA_VERSION) return { ok: false, error: "invalid" };
+  if (value.schemaVersion !== 1 && value.schemaVersion !== PROFILE_SCHEMA_VERSION) {
+    return { ok: false, error: "invalid" };
+  }
   const processedExtractionIds = value.processedExtractionIds ?? [];
+  const credits = value.schemaVersion === 1 ? 100 : value.credits;
   if (
     !Number.isInteger(value.revision) ||
     Number(value.revision) < 0 ||
     !Number.isInteger(value.successfulExtractions) ||
     Number(value.successfulExtractions) < 0 ||
     !isFiniteNonNegative(value.totalExtractedValue) ||
+    !isFiniteNonNegative(credits) ||
     !isStringArray(processedExtractionIds) ||
     !Array.isArray(value.warehouse) ||
     !value.warehouse.every(isItem) ||
@@ -174,7 +190,12 @@ function parseProfile(raw: string): ParseResult {
   }
   return {
     ok: true,
-    profile: { ...(value as unknown as PlayerProfile), processedExtractionIds },
+    profile: {
+      ...(value as unknown as PlayerProfile),
+      schemaVersion: PROFILE_SCHEMA_VERSION,
+      credits,
+      processedExtractionIds,
+    },
   };
 }
 
@@ -274,10 +295,12 @@ export function applyExtraction(
   const droppedItems = extraction.droppedBackpack
     ? listContainerItems(extraction.droppedBackpack)
     : [];
+  const storableRetainedItems = retainedItems.filter((item) => item.value > 0);
+  const meaningfulDroppedItems = droppedItems.filter((item) => item.value > 0);
   const warehouse = new Map(profile.warehouse.map((item) => [item.id, cloneItem(item)]));
-  retainedItems.forEach((item) => warehouse.set(item.id, cloneItem(item)));
-  const retainedValue = retainedItems.reduce((total, item) => total + item.value, 0);
-  const droppedValue = droppedItems.reduce((total, item) => total + item.value, 0);
+  storableRetainedItems.forEach((item) => warehouse.set(item.id, cloneItem(item)));
+  const retainedValue = storableRetainedItems.reduce((total, item) => total + item.value, 0);
+  const droppedValue = meaningfulDroppedItems.reduce((total, item) => total + item.value, 0);
   const retainedContainerIds = [
     extraction.retained.rig.id,
     ...(extraction.retained.backpack ? [extraction.retained.backpack.id] : []),
@@ -289,14 +312,15 @@ export function applyExtraction(
     revision: profile.revision + 1,
     successfulExtractions: profile.successfulExtractions + 1,
     totalExtractedValue: profile.totalExtractedValue + retainedValue,
+    credits: profile.credits,
     processedExtractionIds: [...profile.processedExtractionIds, recordId],
     warehouse: [...warehouse.values()],
     lastExtraction: {
       id: recordId,
       extractedAt,
       mode: extraction.mode,
-      retainedItemIds: [...extraction.retainedItemIds],
-      droppedItemIds: [...extraction.droppedItemIds],
+      retainedItemIds: storableRetainedItems.map((item) => item.id),
+      droppedItemIds: meaningfulDroppedItems.map((item) => item.id),
       retainedContainerIds,
       droppedContainerIds,
       retainedValue,
@@ -319,4 +343,43 @@ export function commitExtraction(
   const profile = applyExtraction(loaded.profile, extraction, extractedAt, recordId);
   if (!saveProfile(storage, profile)) return { ok: false, error: "storage_unavailable" };
   return { ok: true, profile, loadStatus: loaded.status };
+}
+
+export function warehouseSaleValue(item: Pick<ItemInstance, "value" | "tags">): number {
+  const rate = item.tags.includes("red_cargo")
+    ? MARKET_SELL_RATES.redCargo
+    : item.tags.includes("weapon") || item.tags.includes("armor")
+      ? MARKET_SELL_RATES.equipment
+      : item.tags.some((tag) => tag === "medicine" || tag === "ammo" || tag === "tactical" || tag === "tool")
+        ? MARKET_SELL_RATES.supplies
+        : MARKET_SELL_RATES.valuable;
+  return item.value <= 0 ? 0 : Math.max(1, Math.floor(item.value * rate));
+}
+
+export function sellWarehouseItem(profile: PlayerProfile, itemId: string): WarehouseSaleResult {
+  const item = profile.warehouse.find((candidate) => candidate.id === itemId);
+  if (!item) return { ok: false, error: "item_not_found" };
+  const payout = warehouseSaleValue(item);
+  if (payout <= 0) return { ok: false, error: "item_not_found" };
+  return {
+    ok: true,
+    payout,
+    item: cloneItem(item),
+    profile: {
+      ...profile,
+      revision: profile.revision + 1,
+      credits: Math.min(999_999_999, profile.credits + payout),
+      warehouse: profile.warehouse.filter((candidate) => candidate.id !== itemId).map(cloneItem),
+    },
+  };
+}
+
+export function commitWarehouseSale(storage: StorageAdapter, itemId: string): WarehouseSaleResult {
+  const loaded = loadProfile(storage);
+  if (loaded.status === "unsupported") return { ok: false, error: "unsupported_version" };
+  if (loaded.status === "unavailable") return { ok: false, error: "storage_unavailable" };
+  const sale = sellWarehouseItem(loaded.profile, itemId);
+  if (!sale.ok) return sale;
+  if (!saveProfile(storage, sale.profile)) return { ok: false, error: "storage_unavailable" };
+  return { ...sale, loadStatus: loaded.status };
 }

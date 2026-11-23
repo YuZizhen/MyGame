@@ -2,7 +2,9 @@ import Phaser from "phaser";
 import "./style.css";
 import { GameAudio } from "./audio/GameAudio";
 import { installRuntimeDiagnostics } from "./debug/runtimeDiagnostics";
+import { BootScene } from "./game/BootScene";
 import { GameScene } from "./game/GameScene";
+import { HubScene } from "./game/HubScene";
 import { HudScene } from "./game/HudScene";
 
 const rendererType = import.meta.env.DEV && new URLSearchParams(window.location.search).get("renderer") === "canvas"
@@ -34,7 +36,7 @@ const game = new Phaser.Game({
       capture: false,
     },
   },
-  scene: [GameScene, HudScene],
+  scene: [BootScene, HubScene, GameScene, HudScene],
 });
 const gameAudio = new GameAudio(game);
 gameAudio.start();
@@ -74,7 +76,7 @@ const announceExtraction = (outcome: { mode: string; retainedItemCount: number; 
   );
 };
 const manageTabFocus = (event: KeyboardEvent): void => {
-  if (event.code !== "Tab" || !gameShell) return;
+  if (event.code !== "Tab" || !gameShell || game.registry.get("appMode") !== "run") return;
   if (game.registry.get("lootPanelOpen") === true && !event.shiftKey) {
     event.preventDefault();
     event.stopPropagation();
@@ -89,6 +91,7 @@ const manageTabFocus = (event: KeyboardEvent): void => {
   if (!event.repeat) game.events.emit("input:inventory-toggle");
 };
 const closeLootFromWindow = (event: KeyboardEvent): void => {
+  if (game.registry.get("appMode") !== "run") return;
   if (event.repeat) return;
   if (event.code === "Escape" && game.registry.get("itemDetailOpen") === true) {
     event.preventDefault();
@@ -103,6 +106,7 @@ const closeLootFromWindow = (event: KeyboardEvent): void => {
   game.events.emit("input:loot-close");
 };
 const releaseLoadoutDrag = (): void => {
+  if (game.registry.get("appMode") !== "run") return;
   // Phaser may process its queued drag-start on the next frame, after the DOM pointerup.
   // Release once more after that frame so a click can never leave drag state latched.
   window.setTimeout(() => game.events.emit("loadout:drag-state", false), 250);

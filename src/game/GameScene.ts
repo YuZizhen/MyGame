@@ -185,6 +185,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   create(): void {
+    this.registry.set("appMode", "run");
     this.resetRuntimeState();
     this.createTextures();
     const searchParams = new URLSearchParams(window.location.search);
@@ -334,7 +335,7 @@ export class GameScene extends Phaser.Scene {
   update(time: number): void {
     if (this.runState !== "playing") {
       this.player.setVelocity(0, 0);
-      if (Phaser.Input.Keyboard.JustDown(this.controls.restart)) this.scene.restart();
+      if (Phaser.Input.Keyboard.JustDown(this.controls.restart)) this.returnToHub();
       return;
     }
 
@@ -2189,9 +2190,9 @@ export class GameScene extends Phaser.Scene {
       ...(extraction.retained.weapon ? [extraction.retained.weapon] : []),
       ...listContainerItems(extraction.retained.rig),
       ...(extraction.retained.backpack ? listContainerItems(extraction.retained.backpack) : []),
-    ];
+    ].filter((item) => item.value > 0);
     const droppedItems = extraction.droppedBackpack
-      ? listContainerItems(extraction.droppedBackpack)
+      ? listContainerItems(extraction.droppedBackpack).filter((item) => item.value > 0)
       : [];
     return {
       mode: extraction.mode,
@@ -2220,6 +2221,19 @@ export class GameScene extends Phaser.Scene {
     if (!this.extractionPanelOpen) return;
     this.extractionPanelOpen = false;
     this.game.events.emit("extraction:state", { open: false } satisfies ExtractionUiState);
+  }
+
+  private returnToHub(): void {
+    this.cancelChestSearch();
+    this.cancelLootItemSearch();
+    if (this.lootPanelOpen) this.closeLootPanel();
+    if (this.extractionPanelOpen) this.closeExtractionPanel();
+    this.registry.set("lootPanelOpen", false);
+    this.registry.set("itemDetailOpen", false);
+    this.registry.set("appMode", "hub");
+    this.registry.remove("mapState");
+    if (this.scene.isActive("HudScene")) this.scene.stop("HudScene");
+    this.scene.start("HubScene");
   }
 
   private handleExtractionChoice(mode: ExtractionMode): void {

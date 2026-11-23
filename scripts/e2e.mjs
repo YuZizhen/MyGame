@@ -116,6 +116,17 @@ try {
   page.on("pageerror", (error) => runtimeErrors.push(error.message));
 
   await page.goto(BASE_URL);
+  await page.waitForFunction(() => window.__ASHEN_GAME__?.scene?.isActive("HubScene"));
+  await page.waitForFunction(() => {
+    const hub = window.__ASHEN_GAME__.scene.getScene("HubScene");
+    const labels = hub.objects.filter((object) => typeof object.text === "string").map((object) => object.text);
+    return labels.includes("进入探索   Enter") && labels.includes("灰烬前厅") && labels.includes("仓库") && labels.includes("交易行");
+  });
+  await page.keyboard.press("Digit2");
+  await page.waitForFunction(() => window.__ASHEN_GAME__.scene.getScene("HubScene").view === "warehouse");
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => window.__ASHEN_GAME__.scene.getScene("HubScene").view === "home");
+  await page.keyboard.press("Enter");
   await page.waitForFunction(() => window.__ASHEN_GAME__?.scene?.isActive("GameScene"));
   const touchAllowed = await page.evaluate(() => {
     const canvas = document.querySelector("canvas");
@@ -614,10 +625,16 @@ try {
   });
   assert(dropPackResult.backpackDropped, "Keyboard extraction choice 2 did not drop the backpack");
   assert(dropPackResult.extractionMode === "drop_pack", "Keyboard extraction persisted the wrong mode");
+  await page.keyboard.press("r");
+  await page.waitForFunction(() => window.__ASHEN_GAME__?.scene?.isActive("HubScene"));
+  assert(
+    await page.evaluate(() => !window.__ASHEN_GAME__.scene.isActive("HudScene")),
+    "Returning to the hub left the run HUD active",
+  );
   assert(runtimeErrors.length === 0, `Browser runtime errors: ${runtimeErrors.join(" | ")}`);
 
   await context.close();
-  process.stdout.write("Browser regression: 10 scenarios passed\n");
+  process.stdout.write("Browser regression: 11 scenarios passed\n");
 } finally {
   try {
     if (browser) await browser.close();
