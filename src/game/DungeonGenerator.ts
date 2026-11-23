@@ -1,4 +1,4 @@
-import type { DungeonData, DungeonRoom, TileValue } from "./types";
+import type { DungeonData, DungeonRoom, DungeonRoomShape, TileValue } from "./types";
 
 const MAP_WIDTH = 110;
 const MAP_HEIGHT = 76;
@@ -45,11 +45,62 @@ function carve(tiles: TileValue[], x: number, y: number): void {
   }
 }
 
+function roomShapeContains(room: DungeonRoom, x: number, y: number): boolean {
+  const localX = x - room.x;
+  const localY = y - room.y;
+  const farX = room.width - 1 - localX;
+  const farY = room.height - 1 - localY;
+  if (localX < 0 || localY < 0 || farX < 0 || farY < 0) return false;
+
+  if (room.shape === "rectangular") return true;
+  if (room.shape === "chamfered" || room.shape === "arena") {
+    const cut = room.shape === "arena" ? 3 : 2;
+    return localX + localY >= cut
+      && farX + localY >= cut
+      && localX + farY >= cut
+      && farX + farY >= cut;
+  }
+  if (room.shape === "cross") {
+    const verticalInset = Math.max(2, Math.floor(room.width * 0.28));
+    const horizontalInset = Math.max(2, Math.floor(room.height * 0.28));
+    return (localX >= verticalInset && farX >= verticalInset)
+      || (localY >= horizontalInset && farY >= horizontalInset);
+  }
+
+  const normalizedX = (localX + 0.5 - room.width / 2) / (room.width / 2);
+  const normalizedY = (localY + 0.5 - room.height / 2) / (room.height / 2);
+  const edgeNoise = (((x * 31 + y * 17 + room.id * 13) >>> 0) % 11) / 100;
+  return normalizedX * normalizedX + normalizedY * normalizedY <= 0.92 + edgeNoise;
+}
+
 function carveRoom(tiles: TileValue[], room: DungeonRoom): void {
   for (let y = room.y; y < room.y + room.height; y += 1) {
     for (let x = room.x; x < room.x + room.width; x += 1) {
-      carve(tiles, x, y);
+      if (roomShapeContains(room, x, y)) carve(tiles, x, y);
     }
+  }
+  for (let y = room.centerY - 2; y <= room.centerY + 2; y += 1) {
+    for (let x = room.centerX - 2; x <= room.centerX + 2; x += 1) carve(tiles, x, y);
+  }
+}
+
+function addRoomObstacles(tiles: TileValue[], room: DungeonRoom, random: SeededRandom): void {
+  if (room.isStart || room.isBoss || room.id % 3 !== 0) return;
+  const formations = room.id % 4 === 0 ? 2 : 1;
+  let placed = 0;
+  for (let attempt = 0; attempt < 18 && placed < formations; attempt += 1) {
+    const x = room.x + random.integer(2, Math.max(2, room.width - 3));
+    const y = room.y + random.integer(2, Math.max(2, room.height - 3));
+    if (Math.abs(x - room.centerX) <= 2 && Math.abs(y - room.centerY) <= 2) continue;
+    const horizontal = random.next() > 0.5;
+    const length = 2;
+    const cells = Array.from({ length }, (_, index) => ({
+      x: x + (horizontal ? index : 0),
+      y: y + (horizontal ? 0 : index),
+    }));
+    if (!cells.every((cell) => tiles[tileIndex(cell.x, cell.y)] === 1)) continue;
+    for (const cell of cells) tiles[tileIndex(cell.x, cell.y)] = 2;
+    placed += 1;
   }
 }
 
@@ -92,6 +143,36 @@ function roomId(gridX: number, gridY: number): number {
   return gridY * GRID_COLUMNS + gridX;
 }
 
+function pruneDisconnectedTerrain(tiles: TileValue[], startX: number, startY: number): void {
+  const start = tileIndex(startX, startY);
+  const reachable = new Set<number>([start]);
+  const queue = [start];
+  while (queue.length > 0) {
+    const index = queue.shift()!;
+    const x = index % MAP_WIDTH;
+    const y = Math.floor(index / MAP_WIDTH);
+    for (const [nextX, nextY] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]]) {
+      if (nextX <= 0 || nextY <= 0 || nextX >= MAP_WIDTH - 1 || nextY >= MAP_HEIGHT - 1) continue;
+      const nextIndex = tileIndex(nextX, nextY);
+      if (tiles[nextIndex] !== 1 || reachable.has(nextIndex)) continue;
+      reachable.add(nextIndex);
+      queue.push(nextIndex);
+    }
+  }
+  for (let index = 0; index < tiles.length; index += 1) {
+    if (tiles[index] === 1 && !reachable.has(index)) tiles[index] = 0;
+  }
+  for (let y = 1; y < MAP_HEIGHT - 1; y += 1) {
+    for (let x = 1; x < MAP_WIDTH - 1; x += 1) {
+      const index = tileIndex(x, y);
+      if (tiles[index] !== 2) continue;
+      const touchesFloor = [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]]
+        .some(([nextX, nextY]) => tiles[tileIndex(nextX, nextY)] === 1);
+      if (!touchesFloor) tiles[index] = 0;
+    }
+  }
+}
+
 export function generateDungeon(seed = 20261119): DungeonData {
   const random = new SeededRandom(seed);
   const tiles = new Array<TileValue>(MAP_WIDTH * MAP_HEIGHT).fill(0);
@@ -109,6 +190,12 @@ export function generateDungeon(seed = 20261119): DungeonData {
       const maxOffsetY = Math.max(2, CELL_HEIGHT - height - 2);
       const x = cellX + random.integer(2, maxOffsetX);
       const y = cellY + random.integer(2, maxOffsetY);
+      const shapePool: DungeonRoomShape[] = ["rectangular", "chamfered", "cross", "cavern"];
+      const shape = isBoss
+        ? "arena"
+        : isStart
+          ? "chamfered"
+          : shapePool[(roomId(gridX, gridY) + random.integer(0, shapePool.length - 1)) % shapePool.length];
 
       rooms.push({
         id: roomId(gridX, gridY),
@@ -120,6 +207,7 @@ export function generateDungeon(seed = 20261119): DungeonData {
         height,
         centerX: Math.floor(x + width / 2),
         centerY: Math.floor(y + height / 2),
+        shape,
         isStart,
         isBoss,
       });
@@ -127,6 +215,7 @@ export function generateDungeon(seed = 20261119): DungeonData {
   }
 
   rooms.forEach((room) => carveRoom(tiles, room));
+  rooms.forEach((room) => addRoomObstacles(tiles, room, random));
 
   const connections: Array<[number, number]> = [];
   const connectionKeys = new Set<string>();
@@ -187,6 +276,8 @@ export function generateDungeon(seed = 20261119): DungeonData {
       if (extraConnections >= 6) break;
     }
   }
+
+  pruneDisconnectedTerrain(tiles, rooms[startId].centerX, rooms[startId].centerY);
 
   return {
     width: MAP_WIDTH,

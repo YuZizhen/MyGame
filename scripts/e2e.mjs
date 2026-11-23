@@ -140,7 +140,40 @@ try {
   await page.goto(`${BASE_URL}/?qa=chest`);
   await page.waitForFunction(() => window.__ASHEN_GAME__?.scene?.isActive("GameScene"));
   await page.keyboard.down("e");
-  await page.waitForFunction(() => window.__ASHEN_GAME__.scene.getScene("GameScene").chests[0]?.opened === true);
+  try {
+    await page.waitForFunction(
+      () => window.__ASHEN_GAME__.scene.getScene("GameScene").chests[0]?.opened === true,
+      undefined,
+      { timeout: 4_000 },
+    );
+  } catch (error) {
+    const chestState = await page.evaluate(() => {
+      const game = window.__ASHEN_GAME__;
+      const scene = game.scene.getScene("GameScene");
+      const chest = scene.chests[0];
+      const tileX = Math.floor(scene.player.x / 64);
+      const tileY = Math.floor(scene.player.y / 64);
+      return {
+        frame: game.loop.frame,
+        running: game.loop.running,
+        player: { x: scene.player.x, y: scene.player.y, tileX, tileY },
+        playerTile: scene.dungeon.tiles[tileY * scene.dungeon.width + tileX],
+        chest: { x: chest.container.x, y: chest.container.y, opened: chest.opened },
+        distance: Math.hypot(scene.player.x - chest.container.x, scene.player.y - chest.container.y),
+        nearbyChestId: scene.nearbyChest?.id,
+        searchChestId: scene.searchChest?.id,
+        searchRequiresRelease: scene.searchRequiresRelease,
+        hp: scene.hp,
+        nearbyMobs: scene.mobs.filter((mob) => !mob.dead).map((mob) => ({
+          kind: mob.kind,
+          distance: Math.hypot(scene.player.x - mob.sprite.x, scene.player.y - mob.sprite.y),
+        })).filter((mob) => mob.distance < 300),
+        interactDown: scene.controls.interact.isDown,
+        diagnostic: window.__ASHEN_LAST_ERROR__,
+      };
+    });
+    throw new Error(`Hold-to-open chest failed: ${JSON.stringify(chestState)}\n${String(error)}`);
+  }
   await page.keyboard.up("e");
   await page.waitForFunction(() => window.__ASHEN_GAME__.scene.getScene("GameScene").lootPanelOpen === true);
   const initialProgressMetrics = await page.evaluate(() => {
@@ -542,6 +575,7 @@ try {
     const hud = window.__ASHEN_GAME__.scene.getScene("HudScene");
     return hud.lootObjects.some((object) => typeof object.text === "string" && object.text.includes("预计 ↑"));
   });
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   await page.mouse.click(270, 222);
   await page.waitForFunction(() => {
     const game = window.__ASHEN_GAME__;

@@ -1,6 +1,7 @@
 import type { ExtractionMode, ItemIcon, ItemRarity, ItemTag, LoadoutState, WeaponStats } from "../domain/loadout";
 
-export type TileValue = 0 | 1;
+export type TileValue = 0 | 1 | 2;
+export type DungeonRoomShape = "rectangular" | "chamfered" | "cross" | "cavern" | "arena";
 
 export interface DungeonRoom {
   id: number;
@@ -12,6 +13,7 @@ export interface DungeonRoom {
   height: number;
   centerX: number;
   centerY: number;
+  shape: DungeonRoomShape;
   isStart: boolean;
   isBoss: boolean;
 }

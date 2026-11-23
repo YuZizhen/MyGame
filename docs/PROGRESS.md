@@ -1,6 +1,6 @@
 # Development Progress
 
-Last updated: 2026-11-22
+Last updated: 2026-11-23
 
 ## Current branch
 
@@ -52,6 +52,9 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - [x] Added confirmed permanent discard from the standalone loadout and safe return when a chest is open.
 - [x] Repositioned item details as narrow contextual panels beside items, made `Esc` close details first, and added race-free double-click pickup.
 - [x] Added per-stat weapon comparison for damage, attack speed, critical chance, and expected DPS with independent gain/loss indicators.
+- [x] Added seeded procedural room silhouettes: rectangular, chamfered, cross-shaped, cavern, and Boss arena layouts.
+- [x] Added non-walkable lava borders, sparse collidable cinder-rock formations, ash details, and obstacle-aware enemy steering.
+- [x] Added safe chest placement, enemy/chest spawn separation, disconnected-floor pruning, and exploration-radius-only minimap reveal.
 
 ## Active plan
 
@@ -78,7 +81,8 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 
 ### P2 — Expansion
 
-- [ ] Add run seeds, functional room types, shortcuts, and early extraction.
+- [x] Add deterministic QA seeds, randomized playthrough seeds, and irregular room silhouettes.
+- [ ] Add functional room types, shortcuts, and early extraction.
 - [ ] Add insurance storage and recovery rules.
 - [x] Add real-browser regression tests for keyboard focus, looting, and extraction.
 - [x] Configure unit, build, and browser regression tests in CI.
@@ -90,6 +94,8 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - Armor is intentionally still cargo-only; adding defense requires a separate balance pass.
 - The new GitHub Actions workflow has been checked locally but its first remote run has not yet been observed.
 - The production bundle still reports a Phaser-driven chunk-size warning.
+- Enemy obstacle avoidance is lightweight steering rather than full pathfinding; future dense or concave obstacle layouts require A* or a flow field.
+- Lava is currently a clearly non-walkable boundary material, not a damage floor.
 
 ## Verification log
 
@@ -129,6 +135,9 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 | 2026-11-22 | Contextual item details | `npm run test:e2e` | Passed; 10 Edge scenarios including adjacent panel sizing, detail-first `Esc`, race-free double-click pickup, and all previous regressions |
 | 2026-11-22 | Weapon comparison | `npm run check` | Passed; 59 tests and production build |
 | 2026-11-22 | Weapon comparison | `npm run test:e2e` | Passed; 10 Edge scenarios including mixed green improvements and red regressions in the same weapon detail |
+| 2026-11-23 | Ashen terrain generation | `npm run check` | Passed; 62 tests, 64-seed connectivity coverage, and production build |
+| 2026-11-23 | Ashen terrain generation | `npm run test:e2e` | Passed; 10 Edge scenarios including chest search, loot, Boss, extraction, minimap, and runtime-error checks on the new terrain |
+| 2026-11-23 | Ashen terrain generation | Headless Edge screenshots at seed `20261122` | Passed; lava boundaries, cinder-rock blockers, floor continuity, and minimap silhouettes visually inspected |
 
 ## Commits
 
@@ -150,4 +159,5 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - `4118eaf` — `fix: ignore destroyed mobs in paused panels`
 - `c6e9f48` — `feat: add actionable item detail windows`
 - `590a64c` — `feat: refine contextual item interactions`
+- `de6f92f` — `feat: compare weapon stats in item details`
 

@@ -66,6 +66,7 @@ interface MobState {
   windup: number;
   nextAttackAt: number;
   windupEndsAt: number;
+  avoidanceDirection: 1 | -1;
   dead: boolean;
   isBoss: boolean;
 }
@@ -186,7 +187,16 @@ export class GameScene extends Phaser.Scene {
   create(): void {
     this.resetRuntimeState();
     this.createTextures();
-    this.dungeon = generateDungeon();
+    const searchParams = new URLSearchParams(window.location.search);
+    const qaMode = import.meta.env.DEV ? searchParams.get("qa") : null;
+    const seedParameter = searchParams.get("seed");
+    const requestedSeed = seedParameter === null ? undefined : Number(seedParameter);
+    const dungeonSeed = requestedSeed !== undefined && Number.isSafeInteger(requestedSeed) && requestedSeed >= 0
+      ? requestedSeed
+      : qaMode
+        ? 20261119
+        : Date.now() >>> 0;
+    this.dungeon = generateDungeon(dungeonSeed);
     this.worldWidth = this.dungeon.width * TILE_SIZE;
     this.worldHeight = this.dungeon.height * TILE_SIZE;
 
@@ -198,8 +208,8 @@ export class GameScene extends Phaser.Scene {
     this.drawDungeon();
     this.createWalls();
     this.createPlayer();
-    this.createEnemies();
     this.createChests();
+    this.createEnemies();
     this.createFog();
     this.createControls();
 
@@ -236,7 +246,6 @@ export class GameScene extends Phaser.Scene {
     };
     this.registry.set("mapState", this.mapState);
 
-    const qaMode = import.meta.env.DEV ? new URLSearchParams(window.location.search).get("qa") : null;
     if (
       qaMode === "boss" ||
       qaMode === "exit" ||
@@ -258,7 +267,13 @@ export class GameScene extends Phaser.Scene {
       this.chests[0]
     ) {
       const qaChest = this.chests[0];
-      this.player.setPosition(qaChest.container.x - 92, qaChest.container.y + 18);
+      for (const mob of this.mobs) {
+        if (!mob.isBoss && Phaser.Math.Distance.Between(mob.sprite.x, mob.sprite.y, qaChest.container.x, qaChest.container.y) < 360) {
+          mob.dead = true;
+          mob.sprite.disableBody(true, true);
+        }
+      }
+      this.player.setPosition(qaChest.container.x - 86, qaChest.container.y + 18);
       this.cameras.main.centerOn(this.player.x, this.player.y);
       if (qaMode === "loot" || qaMode === "pickup" || qaMode === "rig" || qaMode === "rotate" || qaMode === "discard") {
         qaChest.opened = true;
@@ -556,16 +571,77 @@ export class GameScene extends Phaser.Scene {
 
   private drawDungeon(): void {
     const graphics = this.add.graphics().setDepth(-1000);
-    graphics.fillStyle(0x05080b).fillRect(0, 0, this.worldWidth, this.worldHeight);
+    graphics.fillStyle(0x100705).fillRect(0, 0, this.worldWidth, this.worldHeight);
+    const tileAt = (x: number, y: number): number =>
+      x >= 0 && y >= 0 && x < this.dungeon.width && y < this.dungeon.height
+        ? this.dungeon.tiles[y * this.dungeon.width + x]
+        : 0;
+    const isFloor = (x: number, y: number): boolean => tileAt(x, y) === 1;
+    const isLavaEdge = (x: number, y: number): boolean => {
+      if (tileAt(x, y) !== 0) return false;
+      for (let offsetY = -2; offsetY <= 2; offsetY += 1) {
+        for (let offsetX = -2; offsetX <= 2; offsetX += 1) {
+          if (Math.abs(offsetX) + Math.abs(offsetY) <= 2 && isFloor(x + offsetX, y + offsetY)) return true;
+        }
+      }
+      return false;
+    };
+
+    // 不可进入的岩浆外缘：深色熔岩带先连成片，再叠少量亮纹，避免出现方格贴图感。
+    for (let y = 0; y < this.dungeon.height; y += 1) {
+      let runStart = -1;
+      for (let x = 0; x <= this.dungeon.width; x += 1) {
+        const lava = x < this.dungeon.width && isLavaEdge(x, y);
+        if (lava && runStart === -1) runStart = x;
+        if ((!lava || x === this.dungeon.width) && runStart !== -1) {
+          graphics.fillStyle(0x541b12, 0.94).fillRect(
+            runStart * TILE_SIZE,
+            y * TILE_SIZE,
+            (x - runStart) * TILE_SIZE + 1,
+            TILE_SIZE + 1,
+          );
+          graphics.fillStyle(0x9f321b, 0.34).fillRoundedRect(
+            runStart * TILE_SIZE + 7,
+            y * TILE_SIZE + 12,
+            Math.max(10, (x - runStart) * TILE_SIZE - 14),
+            TILE_SIZE - 24,
+            18,
+          );
+          runStart = -1;
+        }
+      }
+    }
+    for (let y = 0; y < this.dungeon.height; y += 1) {
+      for (let x = 0; x < this.dungeon.width; x += 1) {
+        if (!isLavaEdge(x, y)) continue;
+        const pixelX = x * TILE_SIZE;
+        const pixelY = y * TILE_SIZE;
+        if ((x + y) % 2 === 0) {
+          graphics.fillStyle(0x6b2115, 0.58).fillEllipse(pixelX + 32, pixelY + 32, 112, 78);
+        }
+        if ((x * 17 + y * 29) % 5 !== 0) continue;
+        graphics.fillStyle(0xe65a24, 0.38).fillEllipse(pixelX + 32, pixelY + 34, 48, 22);
+        graphics.lineStyle(3, 0xf08a38, 0.58);
+        graphics.beginPath()
+          .moveTo(pixelX + 9, pixelY + 30)
+          .lineTo(pixelX + 25, pixelY + 23 + ((x + y) % 9))
+          .lineTo(pixelX + 43, pixelY + 38)
+          .lineTo(pixelX + 58, pixelY + 28)
+          .strokePath();
+        if ((x * 13 + y * 7) % 5 === 0) {
+          graphics.fillStyle(0xffcc68, 0.72).fillCircle(pixelX + 27, pixelY + 28, 3);
+        }
+      }
+    }
 
     // 连续铺地，逻辑网格不再直接显示为方形地砖。
     graphics.fillStyle(0x242a2d);
     for (let y = 0; y < this.dungeon.height; y += 1) {
       let runStart = -1;
       for (let x = 0; x <= this.dungeon.width; x += 1) {
-        const isFloor = x < this.dungeon.width && this.dungeon.tiles[y * this.dungeon.width + x] === 1;
-        if (isFloor && runStart === -1) runStart = x;
-        if ((!isFloor || x === this.dungeon.width) && runStart !== -1) {
+        const isGroundTile = x < this.dungeon.width && tileAt(x, y) !== 0;
+        if (isGroundTile && runStart === -1) runStart = x;
+        if ((!isGroundTile || x === this.dungeon.width) && runStart !== -1) {
           graphics.fillRect(runStart * TILE_SIZE, y * TILE_SIZE, (x - runStart) * TILE_SIZE + 1, TILE_SIZE + 1);
           runStart = -1;
         }
@@ -617,8 +693,53 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    const isFloor = (x: number, y: number): boolean =>
-      x >= 0 && y >= 0 && x < this.dungeon.width && y < this.dungeon.height && this.dungeon.tiles[y * this.dungeon.width + x] === 1;
+    // 室内焦岩阻挡与碰撞使用同一 tile，避免出现能穿过的立体装饰或不可见空气墙。
+    for (let y = 0; y < this.dungeon.height; y += 1) {
+      for (let x = 0; x < this.dungeon.width; x += 1) {
+        if (tileAt(x, y) !== 2) continue;
+        const centerX = (x + 0.5) * TILE_SIZE;
+        const centerY = (y + 0.5) * TILE_SIZE;
+        const points: Phaser.Geom.Point[] = [];
+        for (let point = 0; point < 9; point += 1) {
+          const angle = (point / 9) * Math.PI * 2;
+          const radius = 24 + ((x * 19 + y * 23 + point * 11) % 9);
+          points.push(new Phaser.Geom.Point(
+            centerX + Math.cos(angle) * radius,
+            centerY + Math.sin(angle) * radius * 0.78,
+          ));
+        }
+        graphics.fillStyle(0x080706, 0.68).fillEllipse(centerX + 6, centerY + 17, 68, 27);
+        graphics.fillStyle(0x242326, 1).fillPoints(points, true);
+        graphics.lineStyle(3, 0x4f5150, 0.82).strokePoints(points, true);
+        graphics.fillStyle(0x373638, 0.88).fillEllipse(centerX - 7, centerY - 8, 31, 17);
+        graphics.lineStyle(2, 0x8e3820, 0.7)
+          .beginPath()
+          .moveTo(centerX - 17, centerY + 1)
+          .lineTo(centerX - 2, centerY + 8)
+          .lineTo(centerX + 13, centerY + 2)
+          .strokePath();
+      }
+    }
+
+    // 少量余烬裂缝与碎石让相同轮廓的房间仍有局部差异。
+    for (let y = 1; y < this.dungeon.height - 1; y += 1) {
+      for (let x = 1; x < this.dungeon.width - 1; x += 1) {
+        if (!isFloor(x, y) || (x * 37 + y * 61) % 47 !== 0) continue;
+        const pixelX = x * TILE_SIZE;
+        const pixelY = y * TILE_SIZE;
+        graphics.fillStyle(0x151719, 0.55).fillEllipse(pixelX + 24, pixelY + 42, 34, 16);
+        graphics.fillStyle(0x48494a, 0.72).fillCircle(pixelX + 20, pixelY + 37, 7);
+        graphics.fillStyle(0x2e3031, 0.8).fillCircle(pixelX + 31, pixelY + 43, 5);
+        if ((x + y) % 3 === 0) {
+          graphics.lineStyle(2, 0xb54422, 0.58)
+            .beginPath()
+            .moveTo(pixelX + 8, pixelY + 18)
+            .lineTo(pixelX + 27, pixelY + 26)
+            .lineTo(pixelX + 46, pixelY + 17)
+            .strokePath();
+        }
+      }
+    }
 
     // 墙脚环境遮蔽、墙面和墙顶高光，让可行走区域拥有明确厚度。
     for (let y = 0; y < this.dungeon.height; y += 1) {
@@ -626,7 +747,7 @@ export class GameScene extends Phaser.Scene {
         if (!isFloor(x, y)) continue;
         const pixelX = x * TILE_SIZE;
         const pixelY = y * TILE_SIZE;
-        if (!isFloor(x, y - 1)) {
+        if (tileAt(x, y - 1) === 0) {
           graphics.fillStyle(0x06090b, 0.62).fillRect(pixelX, pixelY, TILE_SIZE, 18);
           graphics.fillStyle(0x22292e, 1).fillRect(pixelX, pixelY - 28, TILE_SIZE, 28);
           graphics.fillStyle(0x3a4247, 1).fillRect(pixelX, pixelY - 40, TILE_SIZE, 13);
@@ -635,17 +756,17 @@ export class GameScene extends Phaser.Scene {
             graphics.lineStyle(2, 0x11171a, 0.8).beginPath().moveTo(pixelX + 25, pixelY - 35).lineTo(pixelX + 20, pixelY - 28).strokePath();
           }
         }
-        if (!isFloor(x, y + 1)) {
+        if (tileAt(x, y + 1) === 0) {
           graphics.fillStyle(0x06090b, 0.5).fillRect(pixelX, pixelY + TILE_SIZE - 15, TILE_SIZE, 15);
           graphics.lineStyle(8, 0x171d21, 0.9).beginPath().moveTo(pixelX, pixelY + TILE_SIZE).lineTo(pixelX + TILE_SIZE, pixelY + TILE_SIZE).strokePath();
           graphics.lineStyle(3, 0x465057, 0.45).beginPath().moveTo(pixelX + 5, pixelY + TILE_SIZE - 4).lineTo(pixelX + 55, pixelY + TILE_SIZE - 4).strokePath();
         }
-        if (!isFloor(x - 1, y)) {
+        if (tileAt(x - 1, y) === 0) {
           graphics.fillStyle(0x06090b, 0.48).fillRect(pixelX, pixelY, 16, TILE_SIZE);
           graphics.lineStyle(8, 0x20272b, 0.95).beginPath().moveTo(pixelX, pixelY).lineTo(pixelX, pixelY + TILE_SIZE).strokePath();
           graphics.lineStyle(3, 0x566167, 0.4).beginPath().moveTo(pixelX + 4, pixelY + 7).lineTo(pixelX + 4, pixelY + 53).strokePath();
         }
-        if (!isFloor(x + 1, y)) {
+        if (tileAt(x + 1, y) === 0) {
           graphics.fillStyle(0x06090b, 0.55).fillRect(pixelX + TILE_SIZE - 16, pixelY, 16, TILE_SIZE);
           graphics.lineStyle(8, 0x171d21, 0.95).beginPath().moveTo(pixelX + TILE_SIZE, pixelY).lineTo(pixelX + TILE_SIZE, pixelY + TILE_SIZE).strokePath();
         }
@@ -707,7 +828,7 @@ export class GameScene extends Phaser.Scene {
     for (let y = 0; y < this.dungeon.height; y += 1) {
       let runStart = -1;
       for (let x = 0; x <= this.dungeon.width; x += 1) {
-        const isWall = x < this.dungeon.width && this.dungeon.tiles[y * this.dungeon.width + x] === 0;
+        const isWall = x < this.dungeon.width && this.dungeon.tiles[y * this.dungeon.width + x] !== 1;
         if (isWall && runStart === -1) runStart = x;
         if ((!isWall || x === this.dungeon.width) && runStart !== -1) {
           const runLength = x - runStart;
@@ -743,9 +864,10 @@ export class GameScene extends Phaser.Scene {
             : (room.id + index) % 4 === 0
               ? "stalker"
               : "scavenger";
-        const tileX = room.x + 2 + ((room.id * 7 + index * 4) % Math.max(1, room.width - 4));
-        const tileY = room.y + 2 + ((room.id * 3 + index * 5) % Math.max(1, room.height - 4));
-        this.spawnMob(kind, (tileX + 0.5) * TILE_SIZE, (tileY + 0.5) * TILE_SIZE);
+        const preferredX = room.x + 2 + ((room.id * 7 + index * 4) % Math.max(1, room.width - 4));
+        const preferredY = room.y + 2 + ((room.id * 3 + index * 5) % Math.max(1, room.height - 4));
+        const tile = this.findWalkableRoomTile(room, preferredX, preferredY, 0, 4);
+        this.spawnMob(kind, (tile.x + 0.5) * TILE_SIZE, (tile.y + 0.5) * TILE_SIZE);
       }
     }
 
@@ -767,10 +889,66 @@ export class GameScene extends Phaser.Scene {
       const type: ChestType = index < 8 ? "supply" : index < 11 ? "reliquary" : "hidden";
       const offsetX = index % 2 === 0 ? -room.width * TILE_SIZE * 0.23 : room.width * TILE_SIZE * 0.23;
       const offsetY = ((index % 3) - 1) * TILE_SIZE * 1.2;
-      const x = (room.centerX + 0.5) * TILE_SIZE + offsetX;
-      const y = (room.centerY + 0.5) * TILE_SIZE + offsetY;
+      const preferredX = room.centerX + offsetX / TILE_SIZE;
+      const preferredY = room.centerY + offsetY / TILE_SIZE;
+      const tile = this.findWalkableRoomTile(room, preferredX, preferredY, 1);
+      const x = (tile.x + 0.5) * TILE_SIZE;
+      const y = (tile.y + 0.5) * TILE_SIZE;
       this.chests.push(this.createChest(`chest_${room.id}`, type, room.id, x, y));
     });
+  }
+
+  private findWalkableRoomTile(
+    room: DungeonRoom,
+    preferredX: number,
+    preferredY: number,
+    clearance = 0,
+    minimumChestDistanceTiles = 0,
+  ): { x: number; y: number } {
+    const originX = Phaser.Math.Clamp(Math.round(preferredX), room.x, room.x + room.width - 1);
+    const originY = Phaser.Math.Clamp(Math.round(preferredY), room.y, room.y + room.height - 1);
+    const isWalkable = (x: number, y: number): boolean => {
+      if (
+        x - clearance < room.x
+        || y - clearance < room.y
+        || x + clearance >= room.x + room.width
+        || y + clearance >= room.y + room.height
+      ) return false;
+      for (let offsetY = -clearance; offsetY <= clearance; offsetY += 1) {
+        for (let offsetX = -clearance; offsetX <= clearance; offsetX += 1) {
+          if (this.dungeon.tiles[(y + offsetY) * this.dungeon.width + x + offsetX] !== 1) return false;
+        }
+      }
+      if (minimumChestDistanceTiles > 0) {
+        const worldX = (x + 0.5) * TILE_SIZE;
+        const worldY = (y + 0.5) * TILE_SIZE;
+        const tooClose = this.chests.some((chest) =>
+          Phaser.Math.Distance.Between(worldX, worldY, chest.container.x, chest.container.y)
+            < minimumChestDistanceTiles * TILE_SIZE,
+        );
+        if (tooClose) return false;
+      }
+      return true;
+    };
+    if (isWalkable(originX, originY)) return { x: originX, y: originY };
+
+    const maxRadius = Math.max(room.width, room.height);
+    for (let radius = 1; radius <= maxRadius; radius += 1) {
+      for (let offset = -radius; offset <= radius; offset += 1) {
+        const candidates = [
+          { x: originX + offset, y: originY - radius },
+          { x: originX + offset, y: originY + radius },
+          { x: originX - radius, y: originY + offset },
+          { x: originX + radius, y: originY + offset },
+        ];
+        const match = candidates.find((candidate) => isWalkable(candidate.x, candidate.y));
+        if (match) return match;
+      }
+    }
+    if (minimumChestDistanceTiles > 0) {
+      return this.findWalkableRoomTile(room, preferredX, preferredY, clearance, 0);
+    }
+    return { x: room.centerX, y: room.centerY };
   }
 
   private createChest(id: string, type: ChestType, roomId: number, x: number, y: number): ChestState {
@@ -1396,6 +1574,7 @@ export class GameScene extends Phaser.Scene {
       windup: configuration.windup,
       nextAttackAt: 0,
       windupEndsAt: 0,
+      avoidanceDirection: ((Math.floor(x / TILE_SIZE) + Math.floor(y / TILE_SIZE)) % 2 === 0 ? 1 : -1),
       dead: false,
       isBoss: kind === "boss",
     };
@@ -1639,7 +1818,8 @@ export class GameScene extends Phaser.Scene {
       }
 
       if (distance > mob.attackRange) {
-        mob.sprite.setVelocity(Math.cos(angle) * mob.speed, Math.sin(angle) * mob.speed);
+        const movementAngle = this.mobMovementAngle(mob, angle);
+        mob.sprite.setVelocity(Math.cos(movementAngle) * mob.speed, Math.sin(movementAngle) * mob.speed);
       } else {
         mob.sprite.setVelocity(0, 0);
         if (time >= mob.nextAttackAt) {
@@ -1649,6 +1829,39 @@ export class GameScene extends Phaser.Scene {
         }
       }
     }
+  }
+
+  private mobMovementAngle(mob: MobState, targetAngle: number): number {
+    const radius = mob.kind === "brute" ? 25 : 18;
+    const lookAhead = radius + 42;
+    const canMove = (angle: number): boolean => {
+      const centerX = mob.sprite.x + Math.cos(angle) * lookAhead;
+      const centerY = mob.sprite.y + Math.sin(angle) * lookAhead;
+      return [
+        [0, 0],
+        [radius, 0],
+        [-radius, 0],
+        [0, radius],
+        [0, -radius],
+      ].every(([offsetX, offsetY]) => {
+        const tileX = Math.floor((centerX + offsetX) / TILE_SIZE);
+        const tileY = Math.floor((centerY + offsetY) / TILE_SIZE);
+        return tileX >= 0
+          && tileY >= 0
+          && tileX < this.dungeon.width
+          && tileY < this.dungeon.height
+          && this.dungeon.tiles[tileY * this.dungeon.width + tileX] === 1;
+      });
+    };
+    const direction = mob.avoidanceDirection;
+    const candidates = [
+      targetAngle,
+      targetAngle + direction * Math.PI / 3,
+      targetAngle - direction * Math.PI / 3,
+      targetAngle + direction * Math.PI / 2,
+      targetAngle - direction * Math.PI / 2,
+    ];
+    return candidates.find(canMove) ?? targetAngle;
   }
 
   private stopActiveMobs(reason: "loot-panel" | "extraction-panel"): void {
@@ -1846,11 +2059,6 @@ export class GameScene extends Phaser.Scene {
 
   private discoverRoom(room: DungeonRoom): void {
     this.exploredRooms.add(room.id);
-    for (let y = Math.max(0, room.y - 1); y <= Math.min(this.dungeon.height - 1, room.y + room.height); y += 1) {
-      for (let x = Math.max(0, room.x - 1); x <= Math.min(this.dungeon.width - 1, room.x + room.width); x += 1) {
-        this.mapState?.explored && (this.mapState.explored[y * this.dungeon.width + x] = true);
-      }
-    }
     if (room.isBoss && this.mapState) {
       this.mapState.bossDiscovered = true;
       this.game.events.emit("hud:banner", "发现：守门人竞技场");
@@ -2099,6 +2307,8 @@ export class GameScene extends Phaser.Scene {
     if (!this.mapState) return;
     const playerTileX = Math.floor(this.player.x / TILE_SIZE);
     const playerTileY = Math.floor(this.player.y / TILE_SIZE);
+    const playerCenterX = this.player.x / TILE_SIZE;
+    const playerCenterY = this.player.y / TILE_SIZE;
     const radius = this.visionRadius;
     const radiusStep = Math.round(radius * 4) / 4;
     if (
@@ -2117,8 +2327,8 @@ export class GameScene extends Phaser.Scene {
 
     for (let y = Math.max(0, Math.floor(playerTileY - radius - 1)); y <= Math.min(this.dungeon.height - 1, Math.ceil(playerTileY + radius + 1)); y += 1) {
       for (let x = Math.max(0, Math.floor(playerTileX - radius - 1)); x <= Math.min(this.dungeon.width - 1, Math.ceil(playerTileX + radius + 1)); x += 1) {
-        const dx = x + 0.5 - playerTileX;
-        const dy = y + 0.5 - playerTileY;
+        const dx = x + 0.5 - playerCenterX;
+        const dy = y + 0.5 - playerCenterY;
         const index = y * this.dungeon.width + x;
         if (dx * dx + dy * dy <= radiusSquared && !this.mapState.explored[index]) {
           this.mapState.explored[index] = true;
@@ -2131,9 +2341,9 @@ export class GameScene extends Phaser.Scene {
     this.fogGraphics.clear();
     for (let y = 0; y < this.dungeon.height; y += 1) {
       let runStart = 0;
-      let runAlpha = this.fogAlphaForTile(0, y, playerTileX, playerTileY, radiusSquared);
+      let runAlpha = this.fogAlphaForTile(0, y, playerCenterX, playerCenterY, radiusSquared);
       for (let x = 1; x <= this.dungeon.width; x += 1) {
-        const alpha = x < this.dungeon.width ? this.fogAlphaForTile(x, y, playerTileX, playerTileY, radiusSquared) : -1;
+        const alpha = x < this.dungeon.width ? this.fogAlphaForTile(x, y, playerCenterX, playerCenterY, radiusSquared) : -1;
         if (alpha !== runAlpha) {
           if (runAlpha > 0) {
             this.fogGraphics.fillStyle(0x030506, runAlpha);

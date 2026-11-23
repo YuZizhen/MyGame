@@ -1392,8 +1392,10 @@ export class HudScene extends Phaser.Scene {
       for (let x = 0; x < mapState.width; x += 1) {
         const index = y * mapState.width + x;
         if (!mapState.explored[index]) continue;
-        const isFloor = mapState.tiles[index] === 1;
-        this.minimapGraphics.fillStyle(isFloor ? 0x7c898e : 0x293137, isFloor ? 0.78 : 0.5);
+        const tile = mapState.tiles[index];
+        const color = tile === 1 ? 0x7c898e : tile === 2 ? 0x493a35 : 0x4b1c14;
+        const alpha = tile === 1 ? 0.78 : tile === 2 ? 0.72 : 0.45;
+        this.minimapGraphics.fillStyle(color, alpha);
         this.minimapGraphics.fillRect(
           mapX + x * scale,
           mapY + y * scale,
