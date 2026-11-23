@@ -60,6 +60,9 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - [x] Routed normal startup through the hub while preserving direct QA deep links into combat.
 - [x] Returned completed or failed runs to the hub without leaving the combat HUD or global shortcuts active.
 - [x] Prevented free zero-value starter equipment from entering or inflating the warehouse ledger.
+- [x] Added a real tactical pause menu with resume, persistent audio settings, controls, and game introduction pages.
+- [x] Moved healing off the overloaded interact key: `Q` now consumes one of two starting potions and restores up to 35 HP.
+- [x] Paused physics, scene time, tweens, player input, enemies, and active searches while the Esc menu is open.
 
 ## Active plan
 
@@ -104,6 +107,7 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - Lava is currently a clearly non-walkable boundary material, not a damage floor.
 - The “交易行” is intentionally an offline NPC buyback market; real player listings require accounts, a trusted backend, and server-side validation.
 - Warehouse equipment cannot be deployed into a run yet; that feature needs an atomic active-run ledger to avoid duplication and incorrect loss handling.
+- Loot-tagged medicine remains physical extraction cargo; the current two potion charges are a separate free run resource until consumable item actions are implemented.
 
 ## Verification log
 
@@ -149,6 +153,9 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 | 2026-11-23 | Gray-ash hub and market | `npm run check` | Passed; 67 tests including v1 profile migration, atomic sales, pricing priority, zero-value starter exclusion, and production build |
 | 2026-11-23 | Gray-ash hub and market | `npm run test:e2e` | Passed; 11 Edge scenarios including hub navigation, exploration start, previous combat/loot flows, extraction, and clean return to hub |
 | 2026-11-23 | Gray-ash hub and market | Headless Edge screenshots at 1280×720 | Passed; home, empty/filled warehouse, and empty/filled gray-market layouts visually inspected |
+| 2026-11-23 | Pause menu and potions | `npm run check` | Passed; 67 tests, audio cue coverage, strict TypeScript, and production build |
+| 2026-11-23 | Pause menu and potions | `npm run test:e2e` | Passed; 12 Edge scenarios including Esc priority, frozen physics/time, settings, guide, volume changes, Q healing, and all previous regressions |
+| 2026-11-23 | Pause menu and potions | Headless Edge screenshots at 1280×720 | Passed; overview, settings, and game-introduction pages visually inspected over the paused dungeon |
 
 ## Commits
 
@@ -172,4 +179,5 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - `590a64c` — `feat: refine contextual item interactions`
 - `de6f92f` — `feat: compare weapon stats in item details`
 - `6c6044f` — `feat: generate varied ashen dungeon terrain`
+- `c9d7b5c` — `feat: add functional ashen hub`
 

@@ -22,6 +22,7 @@ const EMITTED_AUDIO_EVENTS = [
   "combat.melee.hit",
   "combat.enemy.kill",
   "player.hurt",
+  "player.heal",
   "boss.attack.telegraph",
   "boss.encounter.start",
   "boss.defeated",

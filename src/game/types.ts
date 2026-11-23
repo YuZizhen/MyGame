@@ -127,3 +127,10 @@ export interface HudState {
   state: "playing" | "won" | "lost";
 }
 
+export type PauseMenuSection = "main" | "settings" | "guide";
+
+export interface PauseMenuState {
+  open: boolean;
+  section: PauseMenuSection;
+}
+

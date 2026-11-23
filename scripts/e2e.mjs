@@ -128,6 +128,42 @@ try {
   await page.waitForFunction(() => window.__ASHEN_GAME__.scene.getScene("HubScene").view === "home");
   await page.keyboard.press("Enter");
   await page.waitForFunction(() => window.__ASHEN_GAME__?.scene?.isActive("GameScene"));
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => window.__ASHEN_GAME__?.registry?.get("pauseMenuOpen") === true);
+  const pausedState = await page.evaluate(() => {
+    const game = window.__ASHEN_GAME__;
+    const scene = game.scene.getScene("GameScene");
+    const hud = game.scene.getScene("HudScene");
+    return {
+      physicsPaused: scene.physics.world.isPaused,
+      clockPaused: scene.time.paused,
+      section: hud.pauseState.section,
+      labels: hud.pauseObjects.filter((object) => typeof object.text === "string").map((object) => object.text),
+    };
+  });
+  assert(pausedState.physicsPaused && pausedState.clockPaused, "Esc menu did not pause physics and scene time");
+  assert(pausedState.labels.includes("[2] 设置") && pausedState.labels.includes("[3] 游戏介绍"), "Pause menu is missing required sections");
+  const volumeBefore = await page.evaluate(() => window.__ASHEN_GAME__.registry.get("audioVolume"));
+  await page.keyboard.press("Digit2");
+  await page.waitForFunction(() => window.__ASHEN_GAME__.scene.getScene("HudScene").pauseState.section === "settings");
+  await page.keyboard.press("ArrowRight");
+  await page.waitForFunction((before) => window.__ASHEN_GAME__.registry.get("audioVolume") > before, volumeBefore);
+  await page.keyboard.press("Digit3");
+  await page.waitForFunction(() => window.__ASHEN_GAME__.scene.getScene("HudScene").pauseState.section === "guide");
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => window.__ASHEN_GAME__.scene.getScene("HudScene").pauseState.section === "main");
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => window.__ASHEN_GAME__.registry.get("pauseMenuOpen") === false);
+  await page.evaluate(() => {
+    const scene = window.__ASHEN_GAME__.scene.getScene("GameScene");
+    scene.hp = 50;
+    scene.emitHudState();
+  });
+  await page.keyboard.press("q");
+  await page.waitForFunction(() => {
+    const scene = window.__ASHEN_GAME__.scene.getScene("GameScene");
+    return scene.hp === 85 && scene.potions === 1;
+  });
   const touchAllowed = await page.evaluate(() => {
     const canvas = document.querySelector("canvas");
     if (!canvas) return false;
@@ -634,7 +670,7 @@ try {
   assert(runtimeErrors.length === 0, `Browser runtime errors: ${runtimeErrors.join(" | ")}`);
 
   await context.close();
-  process.stdout.write("Browser regression: 11 scenarios passed\n");
+  process.stdout.write("Browser regression: 12 scenarios passed\n");
 } finally {
   try {
     if (browser) await browser.close();

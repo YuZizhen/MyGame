@@ -19,6 +19,8 @@ import type {
   LootItem,
   LootRarity,
   LootUiState,
+  PauseMenuState,
+  PauseMenuSection,
   ProfileSummaryUi,
   RuntimeMapState,
 } from "./types";
@@ -99,6 +101,9 @@ export class HudScene extends Phaser.Scene {
   private chestItemSingleClickTimer?: Phaser.Time.TimerEvent;
   private extractionGraphics!: Phaser.GameObjects.Graphics;
   private extractionObjects: Phaser.GameObjects.GameObject[] = [];
+  private pauseGraphics!: Phaser.GameObjects.Graphics;
+  private pauseObjects: Phaser.GameObjects.GameObject[] = [];
+  private pauseState: PauseMenuState = { open: false, section: "main" };
   private lastExtractionOutcome?: ExtractionOutcomeUi;
   private lastMapDraw = 0;
   private lastMapRevision = -1;
@@ -116,6 +121,7 @@ export class HudScene extends Phaser.Scene {
     this.minimapGraphics = this.add.graphics();
     this.lootGraphics = this.add.graphics().setDepth(100);
     this.extractionGraphics = this.add.graphics().setDepth(120);
+    this.pauseGraphics = this.add.graphics().setDepth(200);
 
     this.objectiveText = this.add.text(34, 42, "", {
       fontFamily: "Microsoft YaHei, sans-serif",
@@ -153,7 +159,7 @@ export class HudScene extends Phaser.Scene {
       .setVisible(false);
 
     this.add
-      .text(640, 686, "WASD 移动  ·  鼠标左键 / 空格 挥砍  ·  Shift 翻滚  ·  按住 E 搜索  ·  Tab 行囊  ·  M 静音", {
+      .text(640, 686, "WASD 移动 · 鼠标左键 / 空格 挥砍 · Shift 翻滚 · E 搜索 · Q 药剂 · Tab 行囊 · Esc 暂停", {
         fontFamily: "Microsoft YaHei, sans-serif",
         fontSize: "16px",
         color: "#aeb9bc",
@@ -237,6 +243,10 @@ export class HudScene extends Phaser.Scene {
     this.game.events.on("extraction:state", this.handleExtractionState, this);
     this.game.events.on("extraction:result", this.handleExtractionResult, this);
     this.game.events.on("profile:state", this.handleProfileState, this);
+    this.game.events.on("pause:state", this.handlePauseState, this);
+    this.game.events.on("pause:escape", this.handlePauseEscape, this);
+    this.game.events.on("audio:settings-changed", this.handleAudioSettingsChanged, this);
+    this.input.keyboard?.on("keydown", this.handlePauseKeyDown, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.removeListeners, this);
 
     this.profileSummary =
@@ -246,6 +256,7 @@ export class HudScene extends Phaser.Scene {
   }
 
   update(time: number): void {
+    if (this.pauseState.open) return;
     if (time - this.lastMapDraw > 140) {
       this.lastMapDraw = time;
       this.drawMinimap();
@@ -302,7 +313,155 @@ export class HudScene extends Phaser.Scene {
       chestItems: [],
     });
     this.handleExtractionState({ open: false });
+    this.handlePauseState({ open: false, section: "main" });
     this.renderStatus();
+  }
+
+  private handlePauseState(state: PauseMenuState): void {
+    this.pauseState = { ...state };
+    this.registry.set("pauseMenuOpen", state.open);
+    this.renderPauseMenu();
+  }
+
+  private handlePauseEscape(): void {
+    if (!this.pauseState.open) return;
+    if (this.pauseState.section !== "main") this.setPauseSection("main");
+    else this.game.events.emit("pause:resume");
+  }
+
+  private handlePauseKeyDown(event: KeyboardEvent): void {
+    if (!this.pauseState.open || event.repeat) return;
+    if (event.code === "Digit1" || event.code === "Numpad1" || (event.code === "Enter" && this.pauseState.section === "main")) {
+      this.game.events.emit("pause:resume");
+    } else if (event.code === "Digit2" || event.code === "Numpad2") {
+      this.setPauseSection("settings");
+    } else if (event.code === "Digit3" || event.code === "Numpad3") {
+      this.setPauseSection("guide");
+    } else if (this.pauseState.section === "settings" && event.code === "ArrowLeft") {
+      this.adjustAudioVolume(-0.1);
+    } else if (this.pauseState.section === "settings" && event.code === "ArrowRight") {
+      this.adjustAudioVolume(0.1);
+    }
+  }
+
+  private handleAudioSettingsChanged(): void {
+    if (this.pauseState.open && this.pauseState.section === "settings") this.renderPauseMenu();
+  }
+
+  private setPauseSection(section: PauseMenuSection): void {
+    if (!this.pauseState.open) return;
+    this.pauseState = { open: true, section };
+    this.renderPauseMenu();
+  }
+
+  private renderPauseMenu(): void {
+    this.clearPauseObjects();
+    this.pauseGraphics.clear();
+    if (!this.pauseState.open) return;
+
+    this.pauseGraphics.fillStyle(0x020405, 0.74).fillRect(0, 0, 1280, 720);
+    this.pauseGraphics.fillStyle(0x0b1116, 0.99).fillRoundedRect(365, 120, 550, 480, 7);
+    this.pauseGraphics.lineStyle(1, 0x3a464d, 1).strokeRoundedRect(365, 120, 550, 480, 7);
+    this.pauseGraphics.lineStyle(1, 0x273138, 1).lineBetween(365, 178, 915, 178);
+    this.pauseGraphics.lineStyle(1, 0x273138, 1).lineBetween(519, 178, 519, 600);
+    this.addPauseText(389, 139, "游戏已暂停", { fontSize: "22px", fontStyle: "bold", color: "#e3e8e9" });
+    this.addPauseText(891, 146, "Esc 返回", { fontSize: "12px", color: "#7f8c91" }).setOrigin(1, 0);
+
+    this.createPauseNavButton(383, 202, "[1] 继续游戏", this.pauseState.section === "main", () => this.game.events.emit("pause:resume"));
+    this.createPauseNavButton(383, 250, "[2] 设置", this.pauseState.section === "settings", () => this.setPauseSection("settings"));
+    this.createPauseNavButton(383, 298, "[3] 游戏介绍", this.pauseState.section === "guide", () => this.setPauseSection("guide"));
+
+    if (this.pauseState.section === "settings") this.drawPauseSettings();
+    else if (this.pauseState.section === "guide") this.drawPauseGuide();
+    else this.drawPauseOverview();
+  }
+
+  private drawPauseOverview(): void {
+    this.addPauseText(545, 205, "灰烬地穴", { fontSize: "20px", fontStyle: "bold", color: "#e2d4b5" });
+    this.addPauseText(545, 244, `探索进度  ${this.hudState.roomsExplored} / ${this.hudState.totalRooms}`, { fontSize: "14px", color: "#c7d0d2" });
+    this.addPauseText(545, 276, `生命  ${Math.ceil(this.hudState.hp)} / ${this.hudState.maxHp}    随身药剂  ${this.hudState.potions}`, { fontSize: "14px", color: "#c7d0d2" });
+    this.addPauseText(545, 318, "当前目标", { fontSize: "12px", fontStyle: "bold", color: "#d3923c" });
+    this.addPauseText(545, 345, this.hudState.objective, {
+      fontSize: "14px", color: "#aeb8bb", wordWrap: { width: 335, useAdvancedWrap: true }, lineSpacing: 5,
+    });
+    this.pauseGraphics.lineStyle(1, 0x273138, 1).lineBetween(545, 408, 885, 408);
+    this.addPauseText(545, 433, "当前行动只保存在本次游戏中。\n请完成撤离后再关闭页面。", {
+      fontSize: "13px", color: "#7f8c91", lineSpacing: 8,
+    });
+    this.addPauseText(545, 548, "Enter / Esc 继续游戏", { fontSize: "12px", color: "#6f7c81" });
+  }
+
+  private drawPauseSettings(): void {
+    const volume = Number(this.registry.get("audioVolume") ?? 0.42);
+    const muted = this.registry.get("audioMuted") === true;
+    this.addPauseText(545, 205, "声音设置", { fontSize: "18px", fontStyle: "bold", color: "#e3e8e9" });
+    this.addPauseText(545, 246, "主音量", { fontSize: "13px", color: "#96a3a7" });
+    this.pauseGraphics.fillStyle(0x303a40, 1).fillRoundedRect(616, 253, 176, 4, 2);
+    this.pauseGraphics.fillStyle(0xd3923c, muted ? 0.35 : 1).fillRoundedRect(616, 253, 176 * Phaser.Math.Clamp(volume, 0, 1), 4, 2);
+    this.addPauseText(875, 242, `${Math.round(volume * 100)}%`, { fontFamily: "Consolas, monospace", fontSize: "13px", color: muted ? "#68757a" : "#e0e6e7" }).setOrigin(1, 0);
+    this.createPauseActionButton(545, 277, 72, "− 10", () => this.adjustAudioVolume(-0.1));
+    this.createPauseActionButton(625, 277, 72, "+ 10", () => this.adjustAudioVolume(0.1));
+    this.createPauseActionButton(705, 277, 170, muted ? "开启声音  M" : "静音声音  M", () => this.game.events.emit("audio:set-muted", !muted));
+
+    this.pauseGraphics.lineStyle(1, 0x273138, 1).lineBetween(545, 333, 885, 333);
+    this.addPauseText(545, 352, "操作", { fontSize: "13px", fontStyle: "bold", color: "#d3923c" });
+    const controls = [
+      ["移动", "W A S D"], ["攻击", "鼠标左键 / 空格"], ["翻滚", "Shift"], ["搜索 / 互动", "按住 E"],
+      ["使用药剂", "Q"], ["打开行囊", "Tab"], ["暂停 / 返回", "Esc"],
+    ];
+    controls.forEach(([label, key], index) => {
+      const y = 383 + index * 25;
+      this.addPauseText(545, y, label, { fontSize: "12px", color: "#879499" });
+      this.addPauseText(875, y, key, { fontFamily: "Consolas, Microsoft YaHei, monospace", fontSize: "12px", color: "#e0e6e7" }).setOrigin(1, 0);
+    });
+  }
+
+  private drawPauseGuide(): void {
+    this.addPauseText(545, 205, "灰烬地穴", { fontSize: "20px", fontStyle: "bold", color: "#e2d4b5" });
+    this.addPauseText(545, 240, "单机 PvE 暗黑搜打撤", { fontSize: "13px", color: "#d3923c" });
+    this.addPauseText(545, 282, "进入地穴，击败怪物并搜索装备；\n在风险加剧前选择撤离，将战利品带回仓库。\n\n完整撤离会保留全部负载。\n危急时可以丢包撤离，只保留武器与胸挂。", {
+      fontSize: "14px", color: "#aeb8bb", lineSpacing: 8, wordWrap: { width: 335, useAdvancedWrap: true },
+    });
+    this.pauseGraphics.lineStyle(1, 0x273138, 1).lineBetween(545, 445, 885, 445);
+    this.addPauseText(545, 470, "整备  →  探索  →  搜索  →  战斗  →  撤离", { fontSize: "13px", fontStyle: "bold", color: "#d6a35c" });
+    this.addPauseText(545, 548, "Esc 返回暂停首页", { fontSize: "12px", color: "#6f7c81" });
+  }
+
+  private adjustAudioVolume(delta: number): void {
+    const current = Number(this.registry.get("audioVolume") ?? 0.42);
+    this.game.events.emit("audio:set-volume", Phaser.Math.Clamp(Math.round((current + delta) * 100) / 100, 0, 1));
+  }
+
+  private createPauseNavButton(x: number, y: number, label: string, active: boolean, action: () => void): void {
+    if (active) this.pauseGraphics.fillStyle(0xd3923c, 1).fillRect(x, y + 4, 3, 32);
+    const button = this.add.rectangle(x + 7, y, 126, 40, active ? 0x182229 : 0x10181d, 1)
+      .setOrigin(0).setDepth(202).setInteractive({ useHandCursor: true });
+    button.on(Phaser.Input.Events.POINTER_OVER, () => button.setFillStyle(0x1d282d, 1));
+    button.on(Phaser.Input.Events.POINTER_OUT, () => button.setFillStyle(active ? 0x182229 : 0x10181d, 1));
+    button.on(Phaser.Input.Events.POINTER_DOWN, action);
+    this.pauseObjects.push(button);
+    this.addPauseText(x + 20, y + 11, label, { fontSize: "13px", fontStyle: active ? "bold" : "normal", color: active ? "#e3e8e9" : "#9aa6aa" });
+  }
+
+  private createPauseActionButton(x: number, y: number, width: number, label: string, action: () => void): void {
+    const button = this.add.rectangle(x, y, width, 34, 0x111a1f, 1).setOrigin(0)
+      .setStrokeStyle(1, 0x536068, 1).setDepth(202).setInteractive({ useHandCursor: true });
+    button.on(Phaser.Input.Events.POINTER_OVER, () => button.setFillStyle(0x1b282e, 1));
+    button.on(Phaser.Input.Events.POINTER_OUT, () => button.setFillStyle(0x111a1f, 1));
+    button.on(Phaser.Input.Events.POINTER_DOWN, action);
+    this.pauseObjects.push(button);
+    this.addPauseText(x + width / 2, y + 17, label, { fontSize: "12px", fontStyle: "bold", color: "#d7dfe1" }).setOrigin(0.5);
+  }
+
+  private addPauseText(x: number, y: number, text: string, style: Phaser.Types.GameObjects.Text.TextStyle): Phaser.GameObjects.Text {
+    const object = this.add.text(x, y, text, { fontFamily: "Microsoft YaHei, sans-serif", ...style }).setDepth(203);
+    this.pauseObjects.push(object);
+    return object;
+  }
+
+  private clearPauseObjects(): void {
+    this.pauseObjects.forEach((object) => object.destroy());
+    this.pauseObjects = [];
   }
 
   private handleExtractionResult(outcome: ExtractionOutcomeUi): void {
@@ -1334,7 +1493,7 @@ export class HudScene extends Phaser.Scene {
 
     this.objectiveText.setText(state.objective);
     this.statusText.setText(
-      `生命 ${Math.ceil(state.hp)} / ${state.maxHp}   ·   行囊 ${state.inventoryUsed}/${state.inventoryCapacity}\n探索 ${state.roomsExplored}/${state.totalRooms}   ·   药剂 ${state.potions}   ·   翻滚 ${state.rollReady ? "就绪" : "冷却"}`,
+      `生命 ${Math.ceil(state.hp)} / ${state.maxHp}   ·   行囊 ${state.inventoryUsed}/${state.inventoryCapacity}\n探索 ${state.roomsExplored}/${state.totalRooms}   ·   随身药剂 ${state.potions}   ·   翻滚 ${state.rollReady ? "就绪" : "冷却"}`,
     );
     const profileStatus =
       this.profileSummary.status === "recovered"
@@ -1453,6 +1612,13 @@ export class HudScene extends Phaser.Scene {
     this.game.events.off("extraction:state", this.handleExtractionState, this);
     this.game.events.off("extraction:result", this.handleExtractionResult, this);
     this.game.events.off("profile:state", this.handleProfileState, this);
+    this.game.events.off("pause:state", this.handlePauseState, this);
+    this.game.events.off("pause:escape", this.handlePauseEscape, this);
+    this.game.events.off("audio:settings-changed", this.handleAudioSettingsChanged, this);
+    this.input.keyboard?.off("keydown", this.handlePauseKeyDown, this);
+    this.clearPauseObjects();
+    this.pauseGraphics.clear();
+    this.registry.set("pauseMenuOpen", false);
   }
 }
 

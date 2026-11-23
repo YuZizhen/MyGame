@@ -15,6 +15,8 @@ interface SearchLoop {
   envelope: GainNode;
 }
 
+const AUDIO_SETTINGS_KEY = "ashen-vault.audio";
+
 export class GameAudio {
   private context?: AudioContext;
   private master?: GainNode;
@@ -27,24 +29,35 @@ export class GameAudio {
   constructor(private readonly game: Phaser.Game) {}
 
   start(): void {
+    this.loadSettings();
     this.game.events.on("audio:event", this.handleEvent, this);
+    this.game.events.on("audio:set-muted", this.handleSetMuted, this);
+    this.game.events.on("audio:set-volume", this.handleSetVolume, this);
     window.addEventListener("pointerdown", this.unlock, { capture: true });
     window.addEventListener("keydown", this.unlock, { capture: true });
     window.addEventListener("keydown", this.handleShortcut);
+    this.publishSettings();
   }
 
   setMuted(muted: boolean): void {
     this.muted = muted;
     if (this.master) this.master.gain.value = muted ? 0 : this.volume;
+    this.saveSettings();
+    this.publishSettings();
   }
 
   setVolume(volume: number): void {
+    if (!Number.isFinite(volume)) return;
     this.volume = Math.min(1, Math.max(0, volume));
     if (this.master && !this.muted) this.master.gain.value = this.volume;
+    this.saveSettings();
+    this.publishSettings();
   }
 
   destroy(): void {
     this.game.events.off("audio:event", this.handleEvent, this);
+    this.game.events.off("audio:set-muted", this.handleSetMuted, this);
+    this.game.events.off("audio:set-volume", this.handleSetVolume, this);
     window.removeEventListener("pointerdown", this.unlock, { capture: true });
     window.removeEventListener("keydown", this.unlock, { capture: true });
     window.removeEventListener("keydown", this.handleShortcut);
@@ -74,6 +87,38 @@ export class GameAudio {
     this.setMuted(!this.muted);
     this.game.events.emit("hud:banner", this.muted ? "声音已静音" : "声音已开启");
   };
+
+  private readonly handleSetMuted = (muted: boolean): void => this.setMuted(Boolean(muted));
+
+  private readonly handleSetVolume = (volume: number): void => this.setVolume(Number(volume));
+
+  private publishSettings(): void {
+    this.game.registry.set("audioMuted", this.muted);
+    this.game.registry.set("audioVolume", this.volume);
+    this.game.events.emit("audio:settings-changed", { muted: this.muted, volume: this.volume });
+  }
+
+  private loadSettings(): void {
+    try {
+      const raw = window.localStorage.getItem(AUDIO_SETTINGS_KEY);
+      if (!raw) return;
+      const value = JSON.parse(raw) as { muted?: unknown; volume?: unknown };
+      if (typeof value.muted === "boolean") this.muted = value.muted;
+      if (typeof value.volume === "number" && Number.isFinite(value.volume)) {
+        this.volume = Math.min(1, Math.max(0, value.volume));
+      }
+    } catch {
+      // Audio preferences are optional and must never block the game.
+    }
+  }
+
+  private saveSettings(): void {
+    try {
+      window.localStorage.setItem(AUDIO_SETTINGS_KEY, JSON.stringify({ muted: this.muted, volume: this.volume }));
+    } catch {
+      // Keep the current in-memory setting if browser storage is unavailable.
+    }
+  }
 
   private handleEvent(eventName: string, payload?: AudioEventPayload): void {
     if (eventName === "container.search.loop.stop") {

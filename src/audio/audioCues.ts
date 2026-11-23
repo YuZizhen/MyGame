@@ -63,6 +63,12 @@ export const AUDIO_CUES = {
     { frequency: 360, durationMs: 100, offsetMs: 65, waveform: "sine" },
   ),
   "player.hurt": cue(180, 0.26, { frequency: 110, durationMs: 180, waveform: "sawtooth", endFrequency: 55 }),
+  "player.heal": cue(
+    220,
+    0.2,
+    { frequency: 330, durationMs: 100, waveform: "sine", endFrequency: 440 },
+    { frequency: 660, durationMs: 180, offsetMs: 80, waveform: "sine", endFrequency: 880 },
+  ),
   "boss.attack.telegraph": cue(450, 0.22, { frequency: 80, durationMs: 420, waveform: "sine", endFrequency: 155 }),
   "boss.encounter.start": cue(
     1200,

@@ -100,6 +100,7 @@ interface ControlKeys {
   attack: Phaser.Input.Keyboard.Key;
   roll: Phaser.Input.Keyboard.Key;
   interact: Phaser.Input.Keyboard.Key;
+  usePotion: Phaser.Input.Keyboard.Key;
   restart: Phaser.Input.Keyboard.Key;
 }
 
@@ -135,6 +136,7 @@ export class GameScene extends Phaser.Scene {
   private exploredRooms = new Set<number>();
   private hp = PLAYER_MAX_HP;
   private potions = 2;
+  private potionReadyAt = 0;
   private facing = 0;
   private attackReadyAt = 0;
   private rollReadyAt = 0;
@@ -177,6 +179,7 @@ export class GameScene extends Phaser.Scene {
   private lastLootSearchUiAt = 0;
   private loadoutDragActive = false;
   private returnedLootCounter = 0;
+  private pauseMenuOpen = false;
   private runState: "playing" | "won" | "lost" = "playing";
   private currentObjective = "探索灰烬地穴，寻找遗迹守门人";
 
@@ -321,6 +324,8 @@ export class GameScene extends Phaser.Scene {
       this.game.events.off("loadout:item-rotate", this.handleLoadoutItemRotate, this);
       this.game.events.off("loadout:item-discard", this.handleLoadoutItemDiscard, this);
       this.game.events.off("extraction:choose", this.handleExtractionChoice, this);
+      this.game.events.off("pause:resume", this.handlePauseResume, this);
+      if (this.pauseMenuOpen) this.releasePausedSystems();
     });
     this.game.events.on("loot:take", this.handleLootTake, this);
     this.game.events.on("input:loot-close", this.handleLootCloseShortcut, this);
@@ -330,12 +335,18 @@ export class GameScene extends Phaser.Scene {
     this.game.events.on("loadout:item-rotate", this.handleLoadoutItemRotate, this);
     this.game.events.on("loadout:item-discard", this.handleLoadoutItemDiscard, this);
     this.game.events.on("extraction:choose", this.handleExtractionChoice, this);
+    this.game.events.on("pause:resume", this.handlePauseResume, this);
   }
 
   update(time: number): void {
     if (this.runState !== "playing") {
       this.player.setVelocity(0, 0);
       if (Phaser.Input.Keyboard.JustDown(this.controls.restart)) this.returnToHub();
+      return;
+    }
+
+    if (this.pauseMenuOpen) {
+      this.player.setVelocity(0, 0);
       return;
     }
 
@@ -441,6 +452,7 @@ export class GameScene extends Phaser.Scene {
     this.exploredRooms = new Set<number>();
     this.hp = PLAYER_MAX_HP;
     this.potions = 2;
+    this.potionReadyAt = 0;
     this.facing = 0;
     this.attackReadyAt = 0;
     this.rollReadyAt = 0;
@@ -467,6 +479,8 @@ export class GameScene extends Phaser.Scene {
     this.nearbyChest = undefined;
     this.lootPanelOpen = false;
     this.registry.set("lootPanelOpen", false);
+    this.pauseMenuOpen = false;
+    this.registry.set("pauseMenuOpen", false);
     this.extractionPanelOpen = false;
     this.activeLootChest = undefined;
     this.qaLootChest = undefined;
@@ -1597,6 +1611,7 @@ export class GameScene extends Phaser.Scene {
       attack: Phaser.Input.Keyboard.KeyCodes.SPACE,
       roll: Phaser.Input.Keyboard.KeyCodes.SHIFT,
       interact: Phaser.Input.Keyboard.KeyCodes.E,
+      usePotion: Phaser.Input.Keyboard.KeyCodes.Q,
       restart: Phaser.Input.Keyboard.KeyCodes.R,
     }) as ControlKeys;
     this.input.keyboard!.addCapture([
@@ -1612,7 +1627,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private handleInventoryShortcut(): void {
-    if (this.runState !== "playing" || this.extractionPanelOpen) return;
+    if (this.runState !== "playing" || this.extractionPanelOpen || this.pauseMenuOpen) return;
     if (this.lootPanelOpen) this.closeLootPanel();
     else this.openInventoryPanel();
   }
@@ -1625,13 +1640,20 @@ export class GameScene extends Phaser.Scene {
 
   private handlePanelKeyDown(event: KeyboardEvent): void {
     if (event.repeat || this.runState !== "playing") return;
+    if (this.pauseMenuOpen) {
+      if (event.code === "Escape") this.game.events.emit("pause:escape");
+      return;
+    }
     if (this.extractionPanelOpen) {
       if (event.code === "Digit1" || event.code === "Numpad1") this.handleExtractionChoice("normal");
       else if (event.code === "Digit2" || event.code === "Numpad2") this.handleExtractionChoice("drop_pack");
       else if (event.code === "Escape") this.closeExtractionPanel();
       return;
     }
-    if (!this.lootPanelOpen) return;
+    if (!this.lootPanelOpen) {
+      if (event.code === "Escape") this.setPauseMenuOpen(true);
+      return;
+    }
     if (event.code === "Escape" || event.code === "KeyE") {
       if (event.code === "KeyE") this.searchRequiresRelease = true;
       this.closeLootPanel();
@@ -1644,6 +1666,34 @@ export class GameScene extends Phaser.Scene {
     if (slottedItem && this.activeLootChest) {
       this.handleLootTake({ chestId: this.activeLootChest.id, itemId: slottedItem.id });
     }
+  }
+
+  private readonly handlePauseResume = (): void => this.setPauseMenuOpen(false);
+
+  private setPauseMenuOpen(open: boolean): void {
+    if (this.pauseMenuOpen === open || this.runState !== "playing") return;
+    this.pauseMenuOpen = open;
+    this.registry.set("pauseMenuOpen", open);
+    if (open) {
+      this.cancelChestSearch();
+      this.cancelLootItemSearch();
+      this.player.setVelocity(0, 0);
+      this.stopActiveMobs("pause-menu");
+      this.physics.world.pause();
+      this.tweens.pauseAll();
+      this.time.paused = true;
+    } else {
+      this.releasePausedSystems();
+    }
+    this.game.events.emit("pause:state", { open, section: "main" });
+  }
+
+  private releasePausedSystems(): void {
+    this.time.paused = false;
+    this.tweens.resumeAll();
+    this.physics.world.resume();
+    this.pauseMenuOpen = false;
+    this.registry.set("pauseMenuOpen", false);
   }
 
   private updateFacing(): void {
@@ -1661,12 +1711,9 @@ export class GameScene extends Phaser.Scene {
 
     if (Phaser.Input.Keyboard.JustDown(this.controls.interact)) {
       if (this.tryExit()) return;
-      if (!this.nearbyChest && this.potions > 0 && this.hp < PLAYER_MAX_HP) {
-        this.potions -= 1;
-        this.hp = Math.min(PLAYER_MAX_HP, this.hp + 35);
-        this.showFloatingText(this.player.x, this.player.y - 48, "+35", "#62d48c");
-      }
     }
+
+    if (Phaser.Input.Keyboard.JustDown(this.controls.usePotion)) this.tryUsePotion(time);
 
     if (time < this.controlLockedUntil) {
       this.player.setVelocity(0, 0);
@@ -1702,13 +1749,35 @@ export class GameScene extends Phaser.Scene {
     if (Phaser.Input.Keyboard.JustDown(this.controls.attack)) this.performAttack(time);
   }
 
+  private tryUsePotion(time: number): void {
+    if (time < this.controlLockedUntil || time < this.rollingUntil || time < this.potionReadyAt) return;
+    if (this.hp >= PLAYER_MAX_HP) {
+      this.game.events.emit("hud:banner", "生命已满，无需使用药剂");
+      return;
+    }
+    if (this.potions <= 0) {
+      this.game.events.emit("hud:banner", "药剂已耗尽");
+      return;
+    }
+    const before = this.hp;
+    this.potions -= 1;
+    this.hp = Math.min(PLAYER_MAX_HP, this.hp + 35);
+    this.potionReadyAt = time + 650;
+    this.controlLockedUntil = Math.max(this.controlLockedUntil, time + 450);
+    const restored = Math.ceil(this.hp - before);
+    this.showFloatingText(this.player.x, this.player.y - 48, `+${restored}`, "#62d48c");
+    this.game.events.emit("audio:event", "player.heal");
+    this.game.events.emit("hud:banner", `使用药剂 · 恢复 ${restored} 生命`);
+    this.emitHudState();
+  }
+
   private handlePointerAttack(pointer: Phaser.Input.Pointer): void {
-    if (this.lootPanelOpen || this.extractionPanelOpen) return;
+    if (this.lootPanelOpen || this.extractionPanelOpen || this.pauseMenuOpen) return;
     if (pointer.leftButtonDown()) this.performAttack(this.time.now);
   }
 
   private performAttack(time: number): void {
-    if (this.runState !== "playing" || time < this.attackReadyAt || time < this.controlLockedUntil) return;
+    if (this.runState !== "playing" || this.pauseMenuOpen || time < this.attackReadyAt || time < this.controlLockedUntil) return;
     const weaponStats = this.currentWeaponStats();
     this.attackReadyAt = time + weaponStats.attackIntervalMs;
     this.game.events.emit("audio:event", "player.melee.swing");
@@ -1865,7 +1934,7 @@ export class GameScene extends Phaser.Scene {
     return candidates.find(canMove) ?? targetAngle;
   }
 
-  private stopActiveMobs(reason: "loot-panel" | "extraction-panel"): void {
+  private stopActiveMobs(reason: "loot-panel" | "extraction-panel" | "pause-menu"): void {
     this.mobs.forEach((mob, index) => {
       const sprite = mob?.sprite;
       if (!sprite) {
