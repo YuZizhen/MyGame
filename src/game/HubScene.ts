@@ -1,11 +1,17 @@
 import Phaser from "phaser";
-import { weaponDamagePerSecond, type ItemInstance, type ItemRarity } from "../domain/loadout";
+import { itemCurrentValue, weaponDamagePerSecond, type ItemInstance, type ItemRarity } from "../domain/loadout";
 import {
+  MARKET_CATALOG,
+  commitMarketPurchase,
+  commitPreparedToggle,
+  commitRunLoss,
+  commitRunStart,
   commitWarehouseSale,
   createDefaultProfile,
   loadProfile,
   warehouseSaleValue,
   type PlayerProfile,
+  type MarketCatalogItem,
   type ProfileLoadStatus,
 } from "../profile/profileStore";
 import { describeItem } from "./itemPresentation";
@@ -22,6 +28,8 @@ export class HubScene extends Phaser.Scene {
   private profileStatus: ProfileLoadStatus = "new";
   private view: HubView = "home";
   private selectedItemId?: string;
+  private selectedSku: MarketCatalogItem["sku"] = MARKET_CATALOG[0].sku;
+  private marketMode: "buy" | "sell" = "buy";
   private confirmingSaleId?: string;
   private notice = "";
 
@@ -36,6 +44,14 @@ export class HubScene extends Phaser.Scene {
     this.registry.remove("mapState");
     this.graphics = this.add.graphics();
     this.reloadProfile();
+    if (this.profile.activeRun) {
+      const abandoned = commitRunLoss(window.localStorage, this.profile.activeRun.id);
+      if (abandoned.ok) {
+        this.profile = abandoned.profile;
+        this.profileStatus = abandoned.loadStatus;
+        this.notice = "上次行动未完成，已部署装备与补给已经遗失。";
+      }
+    }
     this.input.keyboard?.on("keydown", this.handleKeyDown, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.input.keyboard?.off("keydown", this.handleKeyDown, this);
@@ -79,8 +95,20 @@ export class HubScene extends Phaser.Scene {
   }
 
   private startExploration(): void {
+    const runId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const result = commitRunStart(window.localStorage, runId, Date.now());
+    if (!result.ok) {
+      this.notice = result.error === "invalid_selection"
+        ? "整备物资无法全部放入胸挂和背包，请减少携带物品。"
+        : result.error === "active_run_exists"
+          ? "已有一场未结算的行动，请重新进入前厅。"
+          : "存档不可用，无法安全开始行动。";
+      this.render();
+      return;
+    }
+    this.profile = result.profile;
     this.registry.set("appMode", "run");
-    this.scene.start("GameScene");
+    this.scene.start("GameScene", { runId });
   }
 
   private render(): void {
@@ -149,8 +177,12 @@ export class HubScene extends Phaser.Scene {
     this.graphics.lineStyle(1, 0x374249, 0.85).strokeRoundedRect(244, 530, 640, 142, 6);
     this.addText(268, 552, "灰烬地穴", { fontSize: "20px", fontStyle: "bold", color: "#e2d4b5" });
     this.addText(268, 584, "目标：击败遗迹守门人，搜寻物资并安全撤离", { fontSize: "13px", color: "#96a3a7" });
-    this.addText(268, 611, "基础配置 · 铁誓长剑 · 突击胸挂 · 远征背包", { fontSize: "12px", color: "#6f7c81" });
+    const prepared = this.profile.warehouse.filter((item) => this.profile.preparedItemIds.includes(item.id));
+    this.addText(268, 611, prepared.length > 0
+      ? `已整备 ${prepared.length} 件 · 行动失败会全部遗失`
+      : "基础配置 · 备用短刃 · 突击胸挂 · 远征背包", { fontSize: "12px", color: prepared.length > 0 ? "#d6a35c" : "#6f7c81" });
     this.createButton(620, 602, 238, 48, "进入探索   Enter", "primary", () => this.startExploration());
+    if (this.notice) this.addText(268, 648, this.notice, { fontSize: "11px", color: "#d6a35c", wordWrap: { width: 330 } });
 
     const warehouseValue = this.profile.warehouse.reduce((total, item) => total + item.value, 0);
     this.addText(946, 50, "铁誓猎人", { fontSize: "20px", fontStyle: "bold", color: "#e3e8e9" });
@@ -210,7 +242,7 @@ export class HubScene extends Phaser.Scene {
     this.drawPanel(920, 24, 336, 672);
     const totalValue = this.profile.warehouse.reduce((total, item) => total + item.value, 0);
     this.addText(248, 48, "仓库", { fontSize: "24px", fontStyle: "bold", color: "#e3e8e9" });
-    this.addText(248, 83, `${this.profile.warehouse.length} 件物品 · 总估值 ${totalValue.toLocaleString("zh-CN")}`, {
+    this.addText(248, 83, `${this.profile.warehouse.length} 件物品 · 已整备 ${this.profile.preparedItemIds.length} 件 · 总估值 ${totalValue.toLocaleString("zh-CN")}`, {
       fontSize: "13px", color: "#849196",
     });
     this.addText(870, 55, "按 3 前往交易行", { fontSize: "11px", color: "#6f7c81" }).setOrigin(1, 0);
@@ -239,15 +271,28 @@ export class HubScene extends Phaser.Scene {
     this.drawPanel(224, 24, 680, 672);
     this.drawPanel(920, 24, 336, 672);
     this.addText(248, 48, "灰市交易行", { fontSize: "24px", fontStyle: "bold", color: "#e3e8e9" });
-    this.addText(248, 83, "NPC 收购委托 · 装备/赤红 35% · 补给 45% · 贵重品 55%", {
+    this.addText(248, 83, this.marketMode === "buy" ? "购买武器、60 发整组弹药与医疗补给" : "NPC 收购 · 装备/赤红 35% · 补给 45% · 贵重品 55%", {
       fontSize: "12px", color: "#849196",
     });
     this.addText(878, 54, `余额 ${this.profile.credits.toLocaleString("zh-CN")}`, {
       fontFamily: MONO, fontSize: "16px", fontStyle: "bold", color: "#e4b45e",
     }).setOrigin(1, 0);
-    this.graphics.fillStyle(0x121a1e, 1).fillRoundedRect(246, 116, 638, 42, 4);
-    this.addText(264, 129, "出售仓库物资", { fontSize: "13px", fontStyle: "bold", color: "#d6a35c" });
-    this.addText(858, 129, "购买委托将在整备系统完成后开放", { fontSize: "11px", color: "#6f7c81" }).setOrigin(1, 0);
+    this.createButton(246, 116, 150, 38, "购买补给", this.marketMode === "buy" ? "primary" : "secondary", () => {
+      this.marketMode = "buy";
+      this.notice = "";
+      this.render();
+    });
+    this.createButton(408, 116, 150, 38, "出售物资", this.marketMode === "sell" ? "primary" : "secondary", () => {
+      this.marketMode = "sell";
+      this.notice = "";
+      this.render();
+    });
+
+    if (this.marketMode === "buy") {
+      MARKET_CATALOG.forEach((product, index) => this.drawCatalogRow(product, 246, 176 + index * 58, 638, 50, product.sku === this.selectedSku));
+      this.drawPurchaseDetail(MARKET_CATALOG.find((product) => product.sku === this.selectedSku));
+      return;
+    }
 
     const items = [...this.profile.warehouse].sort((first, second) => warehouseSaleValue(second) - warehouseSaleValue(first)).slice(0, 9);
     if (items.length === 0) {
@@ -262,6 +307,7 @@ export class HubScene extends Phaser.Scene {
   }
 
   private drawWarehouseCard(item: ItemInstance, x: number, y: number, width: number, height: number, selected: boolean): void {
+    const prepared = this.profile.preparedItemIds.includes(item.id);
     const card = this.add.rectangle(x, y, width, height, selected ? 0x1b292f : 0x11191d, 1)
       .setOrigin(0).setStrokeStyle(selected ? 2 : 1, selected ? this.rarityColor(item.rarity) : 0x2f3a40, selected ? 0.9 : 0.7)
       .setDepth(4).setInteractive({ useHandCursor: true });
@@ -275,9 +321,27 @@ export class HubScene extends Phaser.Scene {
     this.objects.push(card);
     this.drawItemIcon(item, x + 28, y + 31, 0.48);
     this.addText(x + 54, y + 10, item.name, { fontSize: "13px", fontStyle: "bold", color: "#e0e6e7" });
-    this.addText(x + 54, y + 34, `${item.width}×${item.height} · 价值 ${item.value}`, {
+    if (prepared) this.addText(x + width - 8, y + 8, "整备", { fontSize: "10px", fontStyle: "bold", color: "#e4b45e" }).setOrigin(1, 0);
+    this.addText(x + 54, y + 34, `${item.width}×${item.height}${item.quantity !== undefined ? ` · ×${item.quantity}` : ""} · 价值 ${itemCurrentValue(item)}`, {
       fontSize: "11px", color: this.rarityTextColor(item.rarity),
     });
+  }
+
+  private drawCatalogRow(product: MarketCatalogItem, x: number, y: number, width: number, height: number, selected: boolean): void {
+    const item = { ...product.item, id: `catalog:${product.sku}` } as ItemInstance;
+    const row = this.add.rectangle(x, y, width, height, selected ? 0x1b292f : 0x10181c, 1)
+      .setOrigin(0).setStrokeStyle(1, selected ? 0xd3923c : 0x273138, 0.9).setDepth(4).setInteractive({ useHandCursor: true });
+    row.on(Phaser.Input.Events.POINTER_DOWN, () => {
+      this.selectedSku = product.sku;
+      this.notice = "";
+      this.render();
+    });
+    this.objects.push(row);
+    this.drawItemIcon(item, x + 30, y + height / 2, 0.42);
+    this.addText(x + 58, y + 9, item.name, { fontSize: "13px", fontStyle: "bold", color: "#e0e6e7" });
+    const suffix = item.quantity !== undefined ? ` · ${item.quantity}/${item.maxQuantity ?? 60} 发` : item.medicalStats ? ` · ${item.medicalStats.useTimeMs / 1000}秒` : "";
+    this.addText(x + 58, y + 29, `${item.width}×${item.height}${suffix}`, { fontSize: "10px", color: "#7f8c91" });
+    this.addText(x + width - 18, y + 15, `${product.price} 币`, { fontFamily: MONO, fontSize: "14px", fontStyle: "bold", color: "#e4b45e" }).setOrigin(1, 0);
   }
 
   private drawMarketRow(item: ItemInstance, x: number, y: number, width: number, height: number, selected: boolean): void {
@@ -295,7 +359,7 @@ export class HubScene extends Phaser.Scene {
     this.objects.push(row);
     this.addText(x + 18, y + 12, item.name, { fontSize: "13px", fontStyle: "bold", color: "#e0e6e7" });
     this.addText(x + 330, y + 13, `${item.width}×${item.height}`, { fontFamily: MONO, fontSize: "12px", color: "#8f9ca0" });
-    this.addText(x + 420, y + 13, `估值 ${item.value}`, { fontFamily: MONO, fontSize: "12px", color: "#8f9ca0" });
+    this.addText(x + 420, y + 13, `估值 ${itemCurrentValue(item)}`, { fontFamily: MONO, fontSize: "12px", color: "#8f9ca0" });
     this.addText(x + width - 18, y + 11, `收购 ${warehouseSaleValue(item)}`, {
       fontFamily: MONO, fontSize: "14px", fontStyle: "bold", color: "#d6a35c",
     }).setOrigin(1, 0);
@@ -313,7 +377,7 @@ export class HubScene extends Phaser.Scene {
     this.addText(1042, 124, `${presentation.rarityLabel} · ${presentation.category}`, {
       fontSize: "12px", color: this.rarityTextColor(item.rarity),
     });
-    this.addText(946, 184, `尺寸  ${item.width}×${item.height}\n价值  ${item.value}\n腐化  ${item.corruption}`, {
+    this.addText(946, 184, `尺寸  ${item.width}×${item.height}\n价值  ${itemCurrentValue(item)}${item.quantity !== undefined ? `\n数量  ${item.quantity}/${item.maxQuantity ?? 60}` : ""}\n腐化  ${item.corruption}`, {
       fontFamily: MONO, fontSize: "14px", lineSpacing: 10, color: "#c7d0d2",
     });
     this.graphics.lineStyle(1, 0x273138, 0.9).lineBetween(946, 282, 1230, 282);
@@ -331,7 +395,58 @@ export class HubScene extends Phaser.Scene {
         fontSize: "12px", fontStyle: "italic", color: "#748288", wordWrap: { width: 282, useAdvancedWrap: true },
       });
     }
+    const prepared = this.profile.preparedItemIds.includes(item.id);
+    this.createButton(946, 574, 284, 40, prepared ? "取消整备" : "加入下次探索", prepared ? "danger" : "primary", () => this.handlePreparedToggle(item));
     this.createButton(946, 626, 142, 36, "前往交易行", "secondary", () => this.openView("market"));
+    if (this.notice) this.addText(946, 540, this.notice, { fontSize: "11px", color: "#d6a35c", wordWrap: { width: 284 } });
+  }
+
+  private handlePreparedToggle(item: ItemInstance): void {
+    const result = commitPreparedToggle(window.localStorage, item.id);
+    if (!result.ok) {
+      this.notice = result.error === "invalid_selection" ? "每次行动只能整备一把主武器。" : "整备失败，仓库或存档状态已经改变。";
+      this.reloadProfile();
+      this.render();
+      return;
+    }
+    this.profile = result.profile;
+    this.profileStatus = result.loadStatus;
+    this.notice = this.profile.preparedItemIds.includes(item.id) ? `已整备 ${item.name}。` : `已取消整备 ${item.name}。`;
+    this.render();
+  }
+
+  private drawPurchaseDetail(product: MarketCatalogItem | undefined): void {
+    this.addText(946, 50, "购买详情", { fontSize: "18px", fontStyle: "bold", color: "#e3e8e9" });
+    if (!product) return;
+    const item = { ...product.item, id: `catalog:${product.sku}` } as ItemInstance;
+    const presentation = describeItem(item);
+    this.drawItemIcon(item, 990, 126, 0.88);
+    this.addText(1040, 94, item.name, { fontSize: "17px", fontStyle: "bold", color: "#e3e8e9" });
+    this.addText(1040, 124, `${presentation.rarityLabel} · ${presentation.category}`, { fontSize: "12px", color: this.rarityTextColor(item.rarity) });
+    this.drawStatRow(946, 192, "售价", `${product.price} 灰烬币`, "#e4b45e");
+    this.drawStatRow(946, 228, "尺寸", `${item.width}×${item.height}`);
+    if (item.quantity !== undefined) this.drawStatRow(946, 264, "弹药数量", `${item.quantity}/${item.maxQuantity ?? 60}`);
+    if (item.medicalStats) this.drawStatRow(946, 264, "使用时间", `${item.medicalStats.useTimeMs / 1000} 秒`);
+    this.addText(946, 316, presentation.purpose, { fontSize: "12px", color: "#aeb8bb", wordWrap: { width: 282, useAdvancedWrap: true }, lineSpacing: 6 });
+    const canBuy = this.profile.credits >= product.price && this.profileStatus !== "unavailable" && this.profileStatus !== "unsupported";
+    this.createButton(946, 430, 284, 42, canBuy ? `购买  -${product.price}` : `余额不足 · 需要 ${product.price}`, "primary", () => this.handlePurchase(product), canBuy);
+    if (this.notice) this.addText(946, 490, this.notice, { fontSize: "12px", color: "#d6a35c", wordWrap: { width: 284 } });
+  }
+
+  private handlePurchase(product: MarketCatalogItem): void {
+    const transactionId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const result = commitMarketPurchase(window.localStorage, product.sku, transactionId);
+    if (!result.ok) {
+      this.notice = result.error === "insufficient_credits" ? "灰烬币不足。" : "购买失败，存档状态已改变。";
+      this.reloadProfile();
+      this.render();
+      return;
+    }
+    this.profile = result.profile;
+    this.profileStatus = result.loadStatus;
+    this.notice = `已购买 ${product.item.name}，物品已送入仓库。`;
+    this.game.events.emit("hud:banner", this.notice);
+    this.render();
   }
 
   private drawTradeDetail(item: ItemInstance | undefined): void {
@@ -346,7 +461,7 @@ export class HubScene extends Phaser.Scene {
     this.addText(1040, 124, `${presentation.rarityLabel} · ${presentation.category}`, {
       fontSize: "12px", color: this.rarityTextColor(item.rarity),
     });
-    this.drawStatRow(946, 192, "物品估值", item.value.toLocaleString("zh-CN"));
+    this.drawStatRow(946, 192, "物品估值", itemCurrentValue(item).toLocaleString("zh-CN"));
     this.drawStatRow(946, 228, "灰市收购价", warehouseSaleValue(item).toLocaleString("zh-CN"), "#e4b45e");
     this.drawStatRow(946, 264, "出售后余额", (this.profile.credits + warehouseSaleValue(item)).toLocaleString("zh-CN"), "#e4b45e");
     this.graphics.lineStyle(1, 0x273138, 0.9).lineBetween(946, 312, 1230, 312);

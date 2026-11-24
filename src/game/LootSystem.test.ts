@@ -42,7 +42,19 @@ describe("generateChestLoot", () => {
     const weapons = items.filter((item) => item.tags.includes("weapon"));
     expect(weapons.length).toBeGreaterThan(0);
     expect(weapons.every((item) => item.weaponStats !== undefined)).toBe(true);
-    expect(weapons.every((item) => item.weaponStats!.damage >= 30 && item.weaponStats!.damage <= 38)).toBe(true);
+    expect(weapons.filter((item) => item.weaponStats!.kind !== "ranged").every((item) => item.weaponStats!.damage >= 30 && item.weaponStats!.damage <= 38)).toBe(true);
+    expect(weapons.filter((item) => item.weaponStats!.kind === "ranged").every((item) => item.weaponStats!.damage >= 20 && item.weaponStats!.damage <= 32)).toBe(true);
     expect(items.filter((item) => !item.tags.includes("weapon")).every((item) => item.weaponStats === undefined)).toBe(true);
+  });
+
+  it("generates one-to-sixty round ammo stacks and timed medical supplies", () => {
+    const items = Array.from({ length: 120 }, (_, seed) => generateChestLoot(`supplies_${seed}`, "supply", seed)).flat();
+    const ammo = items.filter((item) => item.tags.includes("ammo"));
+    const medicine = items.filter((item) => item.tags.includes("medicine"));
+
+    expect(ammo.length).toBeGreaterThan(0);
+    expect(ammo.every((item) => item.quantity! >= 1 && item.quantity! <= 60 && item.maxQuantity === 60)).toBe(true);
+    expect(medicine.length).toBeGreaterThan(0);
+    expect(medicine.every((item) => item.medicalStats && item.medicalStats.useTimeMs > 0)).toBe(true);
   });
 });

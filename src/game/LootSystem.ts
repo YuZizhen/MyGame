@@ -1,5 +1,5 @@
 import type { ChestType, LootItem, LootRarity } from "./types";
-import type { WeaponStats } from "../domain/loadout";
+import type { AmmoType, MedicalStats, WeaponStats } from "../domain/loadout";
 
 interface LootTemplate {
   id: string;
@@ -10,17 +10,24 @@ interface LootTemplate {
   icon: LootItem["icon"];
   tags: LootItem["tags"];
   weaponBase?: Pick<WeaponStats, "damage" | "attackIntervalMs">;
+  rangedBase?: Omit<WeaponStats, "critChance">;
+  ammoType?: AmmoType;
+  medicalStats?: MedicalStats;
   forcedRarity?: LootRarity;
 }
 
 const TEMPLATES: LootTemplate[] = [
-  { id: "field_bandage", name: "战地绷带", width: 1, height: 1, baseValue: 16, icon: "pouch", tags: ["medicine"] },
-  { id: "salvaged_magazine", name: "拾荒弹匣", width: 1, height: 2, baseValue: 22, icon: "scroll", tags: ["ammo"] },
+  { id: "field_bandage", name: "战地绷带", width: 1, height: 1, baseValue: 16, icon: "pouch", tags: ["medicine"], medicalStats: { healAmount: 25, useTimeMs: 900 } },
+  { id: "field_medkit", name: "野战医疗包", width: 1, height: 2, baseValue: 38, icon: "medkit", tags: ["medicine"], medicalStats: { healAmount: 50, useTimeMs: 1800 } },
+  { id: "light_ammo", name: "轻型弹药", width: 1, height: 1, baseValue: 36, icon: "ammo", tags: ["ammo"], ammoType: "light" },
+  { id: "rifle_ammo", name: "步枪弹药", width: 1, height: 2, baseValue: 54, icon: "ammo", tags: ["ammo"], ammoType: "rifle" },
   { id: "flash_charge", name: "闪光药剂", width: 1, height: 1, baseValue: 24, icon: "gem", tags: ["tactical"] },
   { id: "ember_gem", name: "余烬宝石", width: 1, height: 1, baseValue: 28, icon: "gem", tags: ["valuable"] },
   { id: "old_coin_pouch", name: "旧王钱袋", width: 1, height: 1, baseValue: 20, icon: "pouch", tags: ["valuable"] },
   { id: "oath_ring", name: "铁誓指环", width: 1, height: 1, baseValue: 24, icon: "ring", tags: ["valuable"] },
   { id: "ash_blade", name: "灰烬长剑", width: 1, height: 2, baseValue: 34, icon: "blade", tags: ["weapon", "valuable"], weaponBase: { damage: 30, attackIntervalMs: 480 } },
+  { id: "service_pistol", name: "制式手枪", width: 1, height: 2, baseValue: 95, icon: "pistol", tags: ["weapon", "valuable"], rangedBase: { kind: "ranged", damage: 20, attackIntervalMs: 320, range: 720, magazineSize: 12, loadedAmmo: 0, reloadMs: 1200, ammoType: "light" } },
+  { id: "semi_rifle", name: "半自动步枪", width: 1, height: 3, baseValue: 220, icon: "rifle", tags: ["weapon", "valuable"], rangedBase: { kind: "ranged", damage: 28, attackIntervalMs: 220, range: 900, magazineSize: 15, loadedAmmo: 0, reloadMs: 1800, ammoType: "rifle" } },
   { id: "sealed_scroll", name: "封蜡卷筒", width: 1, height: 2, baseValue: 30, icon: "scroll", tags: ["tool", "valuable"] },
   { id: "warden_helm", name: "守卫头盔", width: 2, height: 1, baseValue: 36, icon: "helm", tags: ["armor", "valuable"] },
   { id: "breach_axe", name: "裂口战斧", width: 2, height: 1, baseValue: 38, icon: "axe", tags: ["weapon", "valuable"], weaponBase: { damage: 34, attackIntervalMs: 600 } },
@@ -68,18 +75,15 @@ export function lootRevealDuration(rarity: LootRarity): number {
 }
 
 function weaponStatsFor(template: LootTemplate, rarity: LootRarity): WeaponStats | undefined {
-  if (!template.weaponBase) return undefined;
+  if (!template.weaponBase && !template.rangedBase) return undefined;
   const bonuses = {
     common: { damage: 0, speed: 0, critChance: 0 },
     magic: { damage: 2, speed: 0.03, critChance: 0.02 },
     rare: { damage: 4, speed: 0.06, critChance: 0.04 },
     red: { damage: 4, speed: 0.06, critChance: 0.04 },
   }[rarity];
-  return {
-    damage: template.weaponBase.damage + bonuses.damage,
-    attackIntervalMs: Math.round(template.weaponBase.attackIntervalMs / (1 + bonuses.speed)),
-    critChance: bonuses.critChance,
-  };
+  const base = template.rangedBase ?? { ...template.weaponBase!, kind: "melee" as const };
+  return { ...base, damage: base.damage + bonuses.damage, attackIntervalMs: Math.round(base.attackIntervalMs / (1 + bonuses.speed)), critChance: bonuses.critChance };
 }
 
 export function generateChestLoot(chestId: string, type: ChestType, seed: number): LootItem[] {
@@ -109,6 +113,10 @@ export function generateChestLoot(chestId: string, type: ChestType, seed: number
       icon: template.icon,
       tags: template.tags,
       weaponStats: weaponStatsFor(template, rarity),
+      quantity: template.ammoType ? 20 + Math.floor(seededValue(seed * 149 + index * 71) * 41) : undefined,
+      maxQuantity: template.ammoType ? 60 : undefined,
+      ammoType: template.ammoType,
+      medicalStats: template.medicalStats ? { ...template.medicalStats } : undefined,
     });
   }
 

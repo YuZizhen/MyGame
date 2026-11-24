@@ -21,7 +21,6 @@ import type {
   LootUiState,
   PauseMenuState,
   PauseMenuSection,
-  ProfileSummaryUi,
   RuntimeMapState,
 } from "./types";
 
@@ -36,18 +35,22 @@ const DEFAULT_HUD: HudState = {
   bossActive: false,
   potions: 2,
   corruption: 0,
+  weaponName: "应急短刃",
+  weaponKind: "melee",
+  loadedAmmo: 0,
+  magazineSize: 0,
+  reserveAmmo: 0,
+  quickSlots: [
+    { key: "1", label: "应急短刃", kind: "weapon", selected: true },
+    { key: "2", label: "空", kind: "weapon", selected: false },
+    { key: "3", label: "空", kind: "medicine", selected: false },
+    { key: "4", label: "空", kind: "medicine", selected: false },
+  ],
   rollReady: true,
   interactionPrompt: "",
   inventoryUsed: 0,
   inventoryCapacity: 42,
   state: "playing",
-};
-
-const DEFAULT_PROFILE_SUMMARY: ProfileSummaryUi = {
-  warehouseItemCount: 0,
-  successfulExtractions: 0,
-  totalExtractedValue: 0,
-  status: "new",
 };
 
 const LOOT_HINT = "物品会自动逐件搜索 · 单击查看 / 双击拾取 · 拖动指定格位 · E/Tab/Esc关闭";
@@ -83,6 +86,7 @@ export class HudScene extends Phaser.Scene {
   private statusText!: Phaser.GameObjects.Text;
   private corruptionText!: Phaser.GameObjects.Text;
   private profileText!: Phaser.GameObjects.Text;
+  private quickSlotsText!: Phaser.GameObjects.Text;
   private bossNameText!: Phaser.GameObjects.Text;
   private bannerText!: Phaser.GameObjects.Text;
   private resultBackdrop!: Phaser.GameObjects.Rectangle;
@@ -109,7 +113,6 @@ export class HudScene extends Phaser.Scene {
   private lastExtractionOutcome?: ExtractionOutcomeUi;
   private lastMapDraw = 0;
   private lastMapRevision = -1;
-  private profileSummary: ProfileSummaryUi = { ...DEFAULT_PROFILE_SUMMARY };
 
   constructor() {
     super("HudScene");
@@ -157,6 +160,15 @@ export class HudScene extends Phaser.Scene {
       color: "#9facb0",
       stroke: "#080b0f",
       strokeThickness: 4,
+    });
+
+    this.quickSlotsText = this.add.text(34, 178, "", {
+      fontFamily: "Consolas, Microsoft YaHei, monospace",
+      fontSize: "11px",
+      color: "#aeb8bb",
+      stroke: "#080b0f",
+      strokeThickness: 3,
+      lineSpacing: 5,
     });
 
     this.bossNameText = this.add
@@ -244,16 +256,12 @@ export class HudScene extends Phaser.Scene {
     this.game.events.on("input:item-detail-close", this.closeItemDetail, this);
     this.game.events.on("extraction:state", this.handleExtractionState, this);
     this.game.events.on("extraction:result", this.handleExtractionResult, this);
-    this.game.events.on("profile:state", this.handleProfileState, this);
     this.game.events.on("pause:state", this.handlePauseState, this);
     this.game.events.on("pause:escape", this.handlePauseEscape, this);
     this.game.events.on("audio:settings-changed", this.handleAudioSettingsChanged, this);
     this.input.keyboard?.on("keydown", this.handlePauseKeyDown, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.removeListeners, this);
 
-    this.profileSummary =
-      (this.registry.get("profileSummary") as ProfileSummaryUi | undefined) ??
-      { ...DEFAULT_PROFILE_SUMMARY };
     this.renderStatus();
   }
 
@@ -381,7 +389,7 @@ export class HudScene extends Phaser.Scene {
   private drawPauseOverview(): void {
     this.addPauseText(545, 205, "灰烬地穴", { fontSize: "20px", fontStyle: "bold", color: "#e2d4b5" });
     this.addPauseText(545, 244, `探索进度  ${this.hudState.roomsExplored} / ${this.hudState.totalRooms}`, { fontSize: "14px", color: "#c7d0d2" });
-    this.addPauseText(545, 276, `生命  ${Math.ceil(this.hudState.hp)} / ${this.hudState.maxHp}    随身药剂  ${this.hudState.potions}    腐化  ${this.hudState.corruption}`, { fontSize: "14px", color: "#c7d0d2" });
+    this.addPauseText(545, 276, `生命 ${Math.ceil(this.hudState.hp)}/${this.hudState.maxHp} · 医疗 ${this.hudState.potions} · 腐化 ${this.hudState.corruption}`, { fontSize: "14px", color: "#c7d0d2" });
     this.addPauseText(545, 318, "当前目标", { fontSize: "12px", fontStyle: "bold", color: "#d3923c" });
     this.addPauseText(545, 345, this.hudState.objective, {
       fontSize: "14px", color: "#aeb8bb", wordWrap: { width: 335, useAdvancedWrap: true }, lineSpacing: 5,
@@ -468,11 +476,6 @@ export class HudScene extends Phaser.Scene {
 
   private handleExtractionResult(outcome: ExtractionOutcomeUi): void {
     this.lastExtractionOutcome = outcome;
-  }
-
-  private handleProfileState(summary: ProfileSummaryUi): void {
-    this.profileSummary = { ...summary };
-    this.renderStatus();
   }
 
   private handleExtractionState(state: ExtractionUiState): void {
@@ -1064,8 +1067,13 @@ export class HudScene extends Phaser.Scene {
 
   private lootItemDetail(item: LootItem, currentWeapon: ItemInstance | undefined): string {
     if (!item.weaponStats) {
+      if (item.quantity !== undefined) return `${item.name} ×${item.quantity} · ${item.width}×${item.height} · 价值 ${item.value}`;
+      if (item.medicalStats) return `恢复 ${item.medicalStats.healAmount} · 使用 ${(item.medicalStats.useTimeMs / 1000).toFixed(1)}秒 · ${item.width}×${item.height}`;
       const suffix = item.tags.includes("armor") ? " · 战利品" : "";
       return `${item.width}×${item.height} · 价值 ${item.value}${suffix}`;
+    }
+    if (item.weaponStats.kind === "ranged") {
+      return `伤${item.weaponStats.damage} · 弹匣 ${item.weaponStats.loadedAmmo ?? 0}/${item.weaponStats.magazineSize ?? 0} · 换弹 ${((item.weaponStats.reloadMs ?? 0) / 1000).toFixed(1)}秒\n${item.width}×${item.height} · ${item.weaponStats.ammoType === "rifle" ? "步枪" : "轻型"}弹药`;
     }
     const attacksPerSecond = 1000 / item.weaponStats.attackIntervalMs;
     const candidateDps = weaponDamagePerSecond(item);
@@ -1246,6 +1254,13 @@ export class HudScene extends Phaser.Scene {
         this.lootGraphics.lineStyle(3, this.rarityColor(rarity), 0.95).strokeRoundedRect(x, y, width, height, 7);
         const icon = this.add.graphics().setDepth(103);
         this.drawLootIcon(icon, placement.item, x + width / 2, y + height / 2, Math.min(0.9, Math.min(width, height) / 56));
+        if (placement.item.quantity !== undefined) {
+          const badge = this.add.text(x + width - 6, y + height - 5, `×${placement.item.quantity}`, {
+            fontFamily: "Consolas, monospace", fontSize: "13px", fontStyle: "bold", color: "#f2f5f5",
+            backgroundColor: "rgba(3, 6, 8, 0.88)", padding: { x: 3, y: 1 },
+          }).setOrigin(1, 1).setDepth(105);
+          this.lootObjects.push(badge);
+        }
         const hitArea = this.add
           .rectangle(x, y, width, height, 0xffffff, 0.001)
           .setOrigin(0)
@@ -1403,6 +1418,25 @@ export class HudScene extends Phaser.Scene {
         graphics.lineStyle(10 * scale, 0xc5d0d2, 1).beginPath().moveTo(centerX - 16 * scale, centerY + 22 * scale).lineTo(centerX + 16 * scale, centerY - 22 * scale).strokePath();
         graphics.lineStyle(5 * scale, 0x76513d, 1).beginPath().moveTo(centerX - 22 * scale, centerY + 13 * scale).lineTo(centerX - 8 * scale, centerY + 27 * scale).strokePath();
         break;
+      case "pistol":
+        graphics.fillStyle(0x9da8ab, 1).fillRoundedRect(centerX - 22 * scale, centerY - 10 * scale, 38 * scale, 15 * scale, 4 * scale);
+        graphics.fillStyle(0x6d4935, 1).fillRect(centerX + 2 * scale, centerY + 2 * scale, 10 * scale, 23 * scale);
+        graphics.fillStyle(0x525c60, 1).fillRect(centerX + 13 * scale, centerY - 6 * scale, 15 * scale, 7 * scale);
+        break;
+      case "rifle":
+        graphics.lineStyle(11 * scale, 0x7b8589, 1).lineBetween(centerX - 27 * scale, centerY + 9 * scale, centerX + 27 * scale, centerY - 9 * scale);
+        graphics.fillStyle(0x6d4935, 1).fillRect(centerX - 25 * scale, centerY + 6 * scale, 17 * scale, 12 * scale);
+        graphics.fillStyle(0x4b5559, 1).fillRect(centerX - 1 * scale, centerY + 1 * scale, 9 * scale, 23 * scale);
+        break;
+      case "ammo":
+        graphics.fillStyle(0xc5a24c, 1).fillRoundedRect(centerX - 14 * scale, centerY - 22 * scale, 10 * scale, 42 * scale, 3 * scale);
+        graphics.fillStyle(0xd8b85e, 1).fillRoundedRect(centerX + 4 * scale, centerY - 22 * scale, 10 * scale, 42 * scale, 3 * scale);
+        break;
+      case "medkit":
+        graphics.fillStyle(0x64736f, 1).fillRoundedRect(centerX - 23 * scale, centerY - 18 * scale, 46 * scale, 36 * scale, 6 * scale);
+        graphics.fillStyle(0xd8dfdc, 1).fillRect(centerX - 4 * scale, centerY - 12 * scale, 8 * scale, 24 * scale);
+        graphics.fillRect(centerX - 12 * scale, centerY - 4 * scale, 24 * scale, 8 * scale);
+        break;
       case "scroll":
         graphics.fillStyle(0xb49b72, 1).fillRoundedRect(centerX - 13 * scale, centerY - 24 * scale, 26 * scale, 48 * scale, 8 * scale);
         graphics.lineStyle(4 * scale, 0x6d4334, 1).strokeRoundedRect(centerX - 13 * scale, centerY - 24 * scale, 26 * scale, 48 * scale, 8 * scale);
@@ -1486,8 +1520,8 @@ export class HudScene extends Phaser.Scene {
     const healthRatio = Phaser.Math.Clamp(state.hp / state.maxHp, 0, 1);
 
     this.statusGraphics.clear();
-    this.statusGraphics.fillStyle(0x080b0f, 0.82).fillRoundedRect(24, 22, 390, 160, 12);
-    this.statusGraphics.lineStyle(1, 0x465057, 0.8).strokeRoundedRect(24, 22, 390, 160, 12);
+    this.statusGraphics.fillStyle(0x080b0f, 0.82).fillRoundedRect(24, 22, 390, 214, 12);
+    this.statusGraphics.lineStyle(1, 0x465057, 0.8).strokeRoundedRect(24, 22, 390, 214, 12);
     this.statusGraphics.fillStyle(0x11171c, 1).fillRoundedRect(34, 72, 278, 18, 5);
     this.statusGraphics.fillStyle(healthRatio > 0.3 ? 0xc84f46 : 0xe38b36, 1);
     this.statusGraphics.fillRoundedRect(36, 74, 274 * healthRatio, 14, 4);
@@ -1495,28 +1529,27 @@ export class HudScene extends Phaser.Scene {
 
     this.objectiveText.setText(state.objective);
     this.statusText.setText(
-      `生命 ${Math.ceil(state.hp)} / ${state.maxHp}   ·   行囊 ${state.inventoryUsed}/${state.inventoryCapacity}\n探索 ${state.roomsExplored}/${state.totalRooms}   ·   随身药剂 ${state.potions}   ·   翻滚 ${state.rollReady ? "就绪" : "冷却"}`,
+      `生命 ${Math.ceil(state.hp)} / ${state.maxHp}   ·   行囊 ${state.inventoryUsed}/${state.inventoryCapacity}\n探索 ${state.roomsExplored}/${state.totalRooms}   ·   医疗 ${state.potions}   ·   翻滚 ${state.rollReady ? "就绪" : "冷却"}`,
     );
     this.corruptionText
       .setText(`腐化\n${state.corruption}`)
       .setColor(state.corruption >= 40 ? "#e06458" : state.corruption >= 20 ? "#bd8df0" : state.corruption > 0 ? "#67b7ed" : "#78858a");
-    const profileStatus =
-      this.profileSummary.status === "recovered"
-        ? " · 档案已恢复"
-        : this.profileSummary.status === "unavailable"
-          ? " · 存档不可用"
-          : this.profileSummary.status === "unsupported"
-            ? " · 需要新版游戏"
-            : "";
     this.profileText
       .setText(
-        `仓库 ${this.profileSummary.warehouseItemCount} 件 · 成功撤离 ${this.profileSummary.successfulExtractions} · 累计价值 ${this.profileSummary.totalExtractedValue}${profileStatus}`,
+        state.weaponKind === "ranged"
+          ? `${state.weaponName}  ${state.loadedAmmo}/${state.magazineSize} · 备弹 ${state.reserveAmmo}${state.loadedAmmo < state.magazineSize && state.reserveAmmo > 0 ? " · R 换弹" : ""}`
+          : `${state.weaponName} · 近战${state.weaponName !== "应急短刃" ? " · V 应急短刃" : ""}`,
       )
       .setColor(
-        this.profileSummary.status === "unavailable" || this.profileSummary.status === "unsupported"
-          ? "#d88479"
-          : "#9facb0",
+        state.weaponKind === "ranged" && state.loadedAmmo === 0 ? "#d88479" : "#9facb0",
       );
+    const slotLabel = (slot: HudState["quickSlots"][number]): string => {
+      const name = slot.label.length > 7 ? `${slot.label.slice(0, 6)}…` : slot.label;
+      return `${slot.selected ? "▶" : " "}[${slot.key}] ${name}${slot.quantity !== undefined ? ` ×${slot.quantity}` : ""}`;
+    };
+    this.quickSlotsText.setText(
+      `${slotLabel(state.quickSlots[0])}    ${slotLabel(state.quickSlots[1])}\n${slotLabel(state.quickSlots[2])}    ${slotLabel(state.quickSlots[3])}`,
+    );
     this.interactionText.setText(state.interactionPrompt).setVisible(state.interactionPrompt.length > 0);
 
     if (state.bossActive) {
@@ -1616,7 +1649,6 @@ export class HudScene extends Phaser.Scene {
     this.game.events.off("input:item-detail-close", this.closeItemDetail, this);
     this.game.events.off("extraction:state", this.handleExtractionState, this);
     this.game.events.off("extraction:result", this.handleExtractionResult, this);
-    this.game.events.off("profile:state", this.handleProfileState, this);
     this.game.events.off("pause:state", this.handlePauseState, this);
     this.game.events.off("pause:escape", this.handlePauseEscape, this);
     this.game.events.off("audio:settings-changed", this.handleAudioSettingsChanged, this);

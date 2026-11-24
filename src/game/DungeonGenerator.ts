@@ -1,11 +1,12 @@
 import type { DungeonData, DungeonRoom, DungeonRoomShape, TileValue } from "./types";
 
-const MAP_WIDTH = 110;
-const MAP_HEIGHT = 76;
-const GRID_COLUMNS = 5;
+export const CANONICAL_DUNGEON_SEED = 20261119;
+const MAP_WIDTH = 144;
+const MAP_HEIGHT = 88;
+const GRID_COLUMNS = 6;
 const GRID_ROWS = 4;
-const CELL_WIDTH = 22;
-const CELL_HEIGHT = 19;
+const CELL_WIDTH = 24;
+const CELL_HEIGHT = 22;
 
 class SeededRandom {
   private state: number;
@@ -85,7 +86,7 @@ function carveRoom(tiles: TileValue[], room: DungeonRoom): void {
 }
 
 function addRoomObstacles(tiles: TileValue[], room: DungeonRoom, random: SeededRandom): void {
-  if (room.isStart || room.isBoss || room.id % 3 !== 0) return;
+  if (room.isStart || room.isBoss || room.id % 2 !== 0) return;
   const formations = room.id % 4 === 0 ? 2 : 1;
   let placed = 0;
   for (let attempt = 0; attempt < 18 && placed < formations; attempt += 1) {
@@ -173,8 +174,8 @@ function pruneDisconnectedTerrain(tiles: TileValue[], startX: number, startY: nu
   }
 }
 
-export function generateDungeon(seed = 20261119): DungeonData {
-  const random = new SeededRandom(seed);
+export function generateDungeon(): DungeonData {
+  const random = new SeededRandom(CANONICAL_DUNGEON_SEED);
   const tiles = new Array<TileValue>(MAP_WIDTH * MAP_HEIGHT).fill(0);
   const rooms: DungeonRoom[] = [];
 
@@ -273,7 +274,7 @@ export function generateDungeon(seed = 20261119): DungeonData {
     if (!connectionKeys.has(key)) {
       addConnection(firstId, secondId);
       extraConnections += 1;
-      if (extraConnections >= 6) break;
+      if (extraConnections >= 8) break;
     }
   }
 

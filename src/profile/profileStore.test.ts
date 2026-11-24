@@ -15,7 +15,11 @@ import {
   PROFILE_TEMP_KEY,
   MARKET_SELL_RATES,
   applyExtraction,
+  commitMarketPurchase,
+  commitPreparedToggle,
   commitExtraction,
+  commitRunLoss,
+  commitRunStart,
   createDefaultProfile,
   commitWarehouseSale,
   loadProfile,
@@ -119,6 +123,21 @@ describe("profile persistence", () => {
     expect(result.profile.schemaVersion).toBe(PROFILE_SCHEMA_VERSION);
     expect(result.profile.credits).toBe(100);
     expect(result.profile.warehouse[0].id).toBe("legacy");
+  });
+
+  it("migrates schema version 2 profiles with empty transaction and deployment state", () => {
+    const storage = new MemoryStorage();
+    const legacy = { ...createDefaultProfile(), schemaVersion: 2 } as Record<string, unknown>;
+    delete legacy.processedTransactionIds;
+    delete legacy.preparedItemIds;
+    storage.values.set(PROFILE_STORAGE_KEY, JSON.stringify(legacy));
+
+    const result = loadProfile(storage);
+
+    expect(result.profile.schemaVersion).toBe(PROFILE_SCHEMA_VERSION);
+    expect(result.profile.processedTransactionIds).toEqual([]);
+    expect(result.profile.preparedItemIds).toEqual([]);
+    expect(result.profile.activeRun).toBeUndefined();
   });
 
   it.each([
@@ -326,5 +345,106 @@ describe("warehouse trading", () => {
     expect(warehouseSaleValue({ ...item("weapon", 100), tags: ["weapon", "valuable"] })).toBe(35);
     expect(warehouseSaleValue({ ...item("medicine", 100), tags: ["medicine"] })).toBe(45);
     expect(warehouseSaleValue({ ...item("red", 100), tags: ["red_cargo", "valuable"] })).toBe(35);
+  });
+
+  it("values a partial ammo stack proportionally while keeping one grid footprint", () => {
+    const ammo: ItemInstance = {
+      ...item("ammo", 36),
+      tags: ["ammo"],
+      quantity: 30,
+      maxQuantity: 60,
+      ammoType: "light",
+    };
+
+    expect(warehouseSaleValue(ammo)).toBe(8);
+    expect(ammo.width * ammo.height).toBe(1);
+  });
+
+  it("makes market purchase transaction ids idempotent", () => {
+    const storage = new MemoryStorage();
+    saveProfile(storage, { ...createDefaultProfile(), credits: 200 });
+
+    const first = commitMarketPurchase(storage, "light_ammo", "transaction-1");
+    const repeated = commitMarketPurchase(storage, "light_ammo", "transaction-1");
+
+    expect(first.ok).toBe(true);
+    expect(repeated.ok).toBe(true);
+    const profile = loadProfile(storage).profile;
+    expect(profile.credits).toBe(176);
+    expect(profile.warehouse).toHaveLength(1);
+    expect(profile.warehouse[0]).toMatchObject({ quantity: 60, maxQuantity: 60, ammoType: "light" });
+  });
+
+  it("does not mutate the profile when credits are insufficient", () => {
+    const storage = new MemoryStorage();
+    saveProfile(storage, { ...createDefaultProfile(), credits: 10 });
+
+    expect(commitMarketPurchase(storage, "semi_rifle", "too-expensive")).toEqual({ ok: false, error: "insufficient_credits" });
+    expect(loadProfile(storage).profile).toMatchObject({ credits: 10, warehouse: [] });
+  });
+});
+
+describe("deployment transactions", () => {
+  const pistol: ItemInstance = {
+    ...item("pistol", 95),
+    width: 1,
+    height: 2,
+    tags: ["weapon", "valuable"],
+    icon: "pistol",
+    weaponStats: { kind: "ranged", damage: 20, attackIntervalMs: 320, critChance: 0, range: 720, magazineSize: 12, loadedAmmo: 0, reloadMs: 1200, ammoType: "light" },
+  };
+  const ammo: ItemInstance = {
+    ...item("ammo-stack", 36),
+    tags: ["ammo"],
+    quantity: 60,
+    maxQuantity: 60,
+    ammoType: "light",
+  };
+
+  it("moves prepared gear out of the warehouse and loses it on defeat", () => {
+    const storage = new MemoryStorage();
+    saveProfile(storage, { ...createDefaultProfile(), warehouse: [pistol, ammo] });
+    expect(commitPreparedToggle(storage, pistol.id).ok).toBe(true);
+    expect(commitPreparedToggle(storage, ammo.id).ok).toBe(true);
+
+    const started = commitRunStart(storage, "run-loss", 100);
+    expect(started.ok).toBe(true);
+    expect(loadProfile(storage).profile).toMatchObject({ warehouse: [], preparedItemIds: [] });
+    expect(loadProfile(storage).profile.activeRun?.deployedItems.map((entry) => entry.id)).toEqual(["pistol", "ammo-stack"]);
+
+    expect(commitRunLoss(storage, "run-loss").ok).toBe(true);
+    expect(loadProfile(storage).profile.warehouse).toEqual([]);
+    expect(loadProfile(storage).profile.activeRun).toBeUndefined();
+  });
+
+  it("returns deployed gear on extraction without counting its purchase value as loot", () => {
+    const rigPlacement = placeItem(createEmptyContainer(ASSAULT_RIG, "rig-return"), "magazine_left", ammo, 0, 0);
+    if (!rigPlacement.ok) throw new Error("fixture placement failed");
+    const profile = {
+      ...createDefaultProfile(),
+      warehouse: [],
+      activeRun: { id: "run-return", startedAt: 100, deployedItems: [pistol, ammo] },
+    };
+    const extraction = settleExtraction({
+      weapon: pistol,
+      rig: rigPlacement.value,
+      backpack: createEmptyContainer(EXPEDITION_BACKPACK, "bag-return"),
+    }, "normal");
+
+    const settled = applyExtraction(profile, extraction, 200, "run-return");
+
+    expect(settled.warehouse.map((entry) => entry.id)).toEqual(["pistol", "ammo-stack"]);
+    expect(settled.totalExtractedValue).toBe(0);
+    expect(settled.lastExtraction?.retainedValue).toBe(0);
+    expect(settled.activeRun).toBeUndefined();
+  });
+
+  it("rejects a second prepared weapon", () => {
+    const storage = new MemoryStorage();
+    const axe = { ...pistol, id: "axe", icon: "axe" as const, weaponStats: { damage: 32, attackIntervalMs: 620, critChance: 0 } };
+    saveProfile(storage, { ...createDefaultProfile(), warehouse: [pistol, axe] });
+
+    expect(commitPreparedToggle(storage, pistol.id).ok).toBe(true);
+    expect(commitPreparedToggle(storage, axe.id)).toEqual({ ok: false, error: "invalid_selection" });
   });
 });

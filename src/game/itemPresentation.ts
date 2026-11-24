@@ -6,6 +6,9 @@ export interface PresentableItem {
   tags: readonly ItemTag[];
   rarity?: ItemRarity;
   weaponStats?: ItemInstance["weaponStats"];
+  quantity?: number;
+  maxQuantity?: number;
+  medicalStats?: ItemInstance["medicalStats"];
 }
 
 export interface ItemPresentation {
@@ -99,6 +102,11 @@ export function compareWeaponStats(candidate: WeaponStats, current?: WeaponStats
 
 const FLAVOR_BY_DEFINITION: Record<string, string> = {
   field_bandage: "沾着灰尘的应急绷带，仍保留基本医疗价值。",
+  field_medkit: "密封尚好的野战医疗包，需要时间完成处理。",
+  light_ammo: "适用于手枪与轻型武器的标准弹药。",
+  rifle_ammo: "装药量更高的步枪弹药，携带时占用更多空间。",
+  service_pistol: "可靠的制式手枪，适合作为初级远程武器。",
+  semi_rifle: "半自动遗迹步枪，射程与单发威力都很出色。",
   salvaged_magazine: "从旧时代武器上拆下的弹匣，结构尚且完整。",
   flash_charge: "撞击后会释放强光的炼金药剂。",
   ember_gem: "内部仍有微弱余烬流动的半透明宝石。",
@@ -136,11 +144,12 @@ export function describeItem(item: PresentableItem): ItemPresentation {
     };
   }
   if (has(tags, "weapon")) {
+    const ranged = item.weaponStats?.kind === "ranged";
     return {
-      category: "近战武器",
+      category: ranged ? "远程武器" : "近战武器",
       rarityLabel,
-      purpose: "可装备到武器位，直接改变伤害、攻速和暴击表现。",
-      flavor: FLAVOR_BY_DEFINITION[definitionId] ?? "可在地穴中使用的近战武器。",
+      purpose: ranged ? "装备后可远程射击；需要对应弹药并花费时间换弹。" : "可装备到主武器位，保留应急短刃作为备用。",
+      flavor: FLAVOR_BY_DEFINITION[definitionId] ?? (ranged ? "需要弹药驱动的远程武器。" : "可在地穴中使用的近战武器。"),
     };
   }
   if (has(tags, "armor")) {
@@ -155,7 +164,7 @@ export function describeItem(item: PresentableItem): ItemPresentation {
     return {
       category: "医疗补给",
       rarityLabel,
-      purpose: "可放入胸挂医疗口袋；当前版本主要作为带出物资。",
+      purpose: `按 Q 使用并消耗；恢复 ${item.medicalStats?.healAmount ?? 0} 生命，需要 ${((item.medicalStats?.useTimeMs ?? 0) / 1000).toFixed(1)} 秒。`,
       flavor: FLAVOR_BY_DEFINITION[definitionId] ?? "用于处理伤势的基础医疗物资。",
     };
   }
@@ -163,7 +172,7 @@ export function describeItem(item: PresentableItem): ItemPresentation {
     return {
       category: "弹药补给",
       rarityLabel,
-      purpose: "可放入胸挂弹匣口袋；当前版本主要作为带出物资。",
+      purpose: `每格最多60发，当前 ${item.quantity ?? 0}/${item.maxQuantity ?? 60}；按 R 为对应枪械换弹。`,
       flavor: FLAVOR_BY_DEFINITION[definitionId] ?? "尚可使用或交易的弹药组件。",
     };
   }

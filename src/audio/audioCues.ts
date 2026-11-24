@@ -55,6 +55,10 @@ export const AUDIO_CUES = {
   "inventory.item.reject": cue(300, 0.16, { frequency: 130, durationMs: 100, waveform: "square", endFrequency: 80 }),
   "player.dodge": cue(120, 0.16, { frequency: 240, durationMs: 120, waveform: "sawtooth", endFrequency: 90 }),
   "player.melee.swing": cue(90, 0.16, { frequency: 210, durationMs: 95, waveform: "sawtooth", endFrequency: 80 }),
+  "player.ranged.shot": cue(55, 0.23, { frequency: 170, durationMs: 75, waveform: "square", endFrequency: 70 }),
+  "weapon.empty": cue(180, 0.14, { frequency: 520, durationMs: 45, waveform: "square", endFrequency: 350 }),
+  "weapon.reload.start": cue(120, 0.12, { frequency: 260, durationMs: 65, waveform: "triangle", endFrequency: 190 }),
+  "weapon.reload.complete": cue(120, 0.15, { frequency: 310, durationMs: 65, waveform: "square", endFrequency: 440 }),
   "combat.melee.hit": cue(65, 0.22, { frequency: 92, durationMs: 85, waveform: "square", endFrequency: 55 }),
   "combat.enemy.kill": cue(
     110,

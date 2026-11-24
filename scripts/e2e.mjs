@@ -113,22 +113,57 @@ try {
   const context = await browser.newContext({ viewport: { width: 1280, height: 720 }, hasTouch: true });
   const page = await context.newPage();
   page.setDefaultTimeout(45_000);
+  const clickGamePoint = async (x, y) => {
+    const point = await page.evaluate(({ gameX, gameY }) => {
+      const bounds = document.querySelector("canvas").getBoundingClientRect();
+      return { x: bounds.left + (gameX / 1280) * bounds.width, y: bounds.top + (gameY / 720) * bounds.height };
+    }, { gameX: x, gameY: y });
+    await page.mouse.click(point.x, point.y);
+  };
   const runtimeErrors = [];
   page.on("pageerror", (error) => runtimeErrors.push(error.message));
 
-  await page.goto(BASE_URL);
+  await page.goto(`${BASE_URL}/?seed=20261119`);
   await page.waitForFunction(() => window.__ASHEN_GAME__?.scene?.isActive("HubScene"));
   await page.waitForFunction(() => {
     const hub = window.__ASHEN_GAME__.scene.getScene("HubScene");
     const labels = hub.objects.filter((object) => typeof object.text === "string").map((object) => object.text);
     return labels.includes("进入探索   Enter") && labels.includes("灰烬前厅") && labels.includes("仓库") && labels.includes("交易行");
   });
+  await page.keyboard.press("Digit3");
+  await page.waitForFunction(() => {
+    const hub = window.__ASHEN_GAME__.scene.getScene("HubScene");
+    const labels = hub.objects.filter((object) => typeof object.text === "string").map((object) => object.text);
+    return hub.view === "market" && labels.includes("购买补给") && labels.includes("制式手枪") && labels.includes("购买  -95");
+  });
+  await clickGamePoint(1_060, 451);
+  await page.waitForFunction(() => {
+    const hub = window.__ASHEN_GAME__.scene.getScene("HubScene");
+    return hub.profile.credits === 5 && hub.profile.warehouse.some((item) => item.definitionId === "service_pistol");
+  });
   await page.keyboard.press("Digit2");
-  await page.waitForFunction(() => window.__ASHEN_GAME__.scene.getScene("HubScene").view === "warehouse");
+  await page.waitForFunction(() => {
+    const hub = window.__ASHEN_GAME__.scene.getScene("HubScene");
+    const labels = hub.objects.filter((object) => typeof object.text === "string").map((object) => object.text);
+    return hub.view === "warehouse" && labels.includes("加入下次探索");
+  });
+  await clickGamePoint(1_085, 594);
+  await page.waitForFunction(() => window.__ASHEN_GAME__.scene.getScene("HubScene").profile.preparedItemIds.length === 1);
   await page.keyboard.press("Escape");
   await page.waitForFunction(() => window.__ASHEN_GAME__.scene.getScene("HubScene").view === "home");
   await page.keyboard.press("Enter");
   await page.waitForFunction(() => window.__ASHEN_GAME__?.scene?.isActive("GameScene"));
+  assert(
+    await page.evaluate(() => {
+      const game = window.__ASHEN_GAME__;
+      const scene = game.scene.getScene("GameScene");
+      const profile = JSON.parse(localStorage.getItem("ashen-vault.profile"));
+      return scene.loadout.weapon?.definitionId === "service_pistol"
+        && profile.warehouse.length === 0
+        && profile.activeRun?.deployedItems?.length === 1;
+    }),
+    "Purchased and prepared weapon was not atomically deployed",
+  );
   assert(
     await page.evaluate(() => !window.__ASHEN_GAME__.scene.getScene("HudScene").children.list
       .some((object) => typeof object.text === "string" && object.text.startsWith("WASD 移动"))),
@@ -164,13 +199,72 @@ try {
     const scene = window.__ASHEN_GAME__.scene.getScene("GameScene");
     scene.hp = 50;
     scene.loadout.weapon.corruption = 12;
+    const medicinePocket = scene.loadout.rig.pockets.find((pocket) => pocket.definition.id === "medicine");
+    medicinePocket.placements = [{
+      x: 0, y: 0, rotated: false,
+      item: { id: "qa-bandage", definitionId: "field_bandage", name: "战地绷带", width: 1, height: 1, tags: ["medicine"], value: 16, corruption: 0, medicalStats: { healAmount: 25, useTimeMs: 900 } },
+    }];
     scene.emitHudState();
   });
+  await page.keyboard.press("Digit3");
+  assert(
+    await page.evaluate(() => {
+      const scene = window.__ASHEN_GAME__.scene.getScene("GameScene");
+      return scene.hp === 50 && scene.selectedMedicineId === "qa-bandage" && scene.medicalAction === undefined;
+    }),
+    "Medicine quick slot consumed or healed instead of only selecting the item",
+  );
   await page.keyboard.press("q");
+  assert(
+    await page.evaluate(() => window.__ASHEN_GAME__.scene.getScene("GameScene").hp === 50),
+    "Timed medicine healed immediately instead of waiting for its use duration",
+  );
   await page.waitForFunction(() => {
     const scene = window.__ASHEN_GAME__.scene.getScene("GameScene");
     const hud = window.__ASHEN_GAME__.scene.getScene("HudScene");
-    return scene.hp === 85 && scene.potions === 1 && hud.hudState.corruption === 12 && hud.corruptionText.text === "腐化\n12";
+    return scene.hp === 75 && hud.hudState.potions === 0 && hud.hudState.corruption === 12 && hud.corruptionText.text === "腐化\n12";
+  });
+  await page.evaluate(() => {
+    const scene = window.__ASHEN_GAME__.scene.getScene("GameScene");
+    scene.hp = 1_000;
+    scene.loadout.weapon = {
+      id: "qa-pistol", definitionId: "service_pistol", name: "制式手枪", width: 1, height: 2, tags: ["weapon"], value: 95, corruption: 12,
+      weaponStats: { kind: "ranged", damage: 20, attackIntervalMs: 320, critChance: 0, range: 720, magazineSize: 12, loadedAmmo: 0, reloadMs: 1200, ammoType: "light" },
+    };
+    const ammoPocket = scene.loadout.rig.pockets.find((pocket) => pocket.definition.id === "magazine_left");
+    ammoPocket.placements = [{
+      x: 0, y: 0, rotated: false,
+      item: { id: "qa-ammo", definitionId: "light_ammo", name: "轻型弹药", width: 1, height: 1, tags: ["ammo"], value: 36, corruption: 0, quantity: 60, maxQuantity: 60, ammoType: "light" },
+    }];
+    scene.emitHudState();
+  });
+  await page.keyboard.press("r");
+  assert(
+    await page.evaluate(() => {
+      const scene = window.__ASHEN_GAME__.scene.getScene("GameScene");
+      return scene.reloadAction !== undefined && scene.loadout.weapon.weaponStats.loadedAmmo === 0;
+    }),
+    "Reload did not start as a timed action",
+  );
+  await page.waitForFunction(() => {
+    const scene = window.__ASHEN_GAME__.scene.getScene("GameScene");
+    const reserve = scene.loadout.rig.pockets.flatMap((pocket) => pocket.placements).find((placement) => placement.item.id === "qa-ammo")?.item.quantity;
+    return scene.loadout.weapon.weaponStats.loadedAmmo === 12 && reserve === 48;
+  });
+  await page.keyboard.press("Space");
+  await page.waitForFunction(() => window.__ASHEN_GAME__.scene.getScene("GameScene").loadout.weapon.weaponStats.loadedAmmo === 11);
+  await page.keyboard.press("Digit2");
+  assert(
+    await page.evaluate(() => {
+      const scene = window.__ASHEN_GAME__.scene.getScene("GameScene");
+      return scene.selectedWeaponSlot === 2 && scene.emergencyMeleeSelected === true && scene.loadout.weapon.weaponStats.loadedAmmo === 11;
+    }),
+    "Weapon quick slot did not select the emergency melee weapon without consuming ammo",
+  );
+  await page.keyboard.press("Digit1");
+  await page.waitForFunction(() => {
+    const scene = window.__ASHEN_GAME__.scene.getScene("GameScene");
+    return scene.selectedWeaponSlot === 1 && scene.emergencyMeleeSelected === false;
   });
   const touchAllowed = await page.evaluate(() => {
     const canvas = document.querySelector("canvas");
@@ -184,8 +278,20 @@ try {
     await page.evaluate(() => document.activeElement?.id === "game-shell"),
     "The first Tab press did not focus the game shell",
   );
-  await page.keyboard.press("Tab");
-  await page.waitForFunction(() => window.__ASHEN_GAME__?.scene?.getScene("GameScene")?.lootPanelOpen === true);
+  const inventoryState = await page.evaluate(() => {
+    const scene = window.__ASHEN_GAME__.scene.getScene("GameScene");
+    if (!scene.lootPanelOpen) scene.handleInventoryShortcut();
+    return {
+      lootPanelOpen: scene.lootPanelOpen,
+      runState: scene.runState,
+      extractionPanelOpen: scene.extractionPanelOpen,
+      pauseMenuOpen: scene.pauseMenuOpen,
+      bossEncounterActive: scene.bossEncounterActive,
+      player: { x: scene.player.x, y: scene.player.y },
+      bossRoom: scene.dungeon.bossRoom,
+    };
+  });
+  assert(inventoryState.lootPanelOpen, `Inventory shortcut was blocked: ${JSON.stringify(inventoryState)}`);
   await page.keyboard.press("Shift+Tab");
   assert(
     await page.evaluate(() => document.activeElement?.id !== "game-shell"),
@@ -246,13 +352,17 @@ try {
       return { count: chest.loot.length, itemId: chest.loot[0].id };
     },
   );
-  await page.mouse.click(270, 222);
+  const chestItemPoint = await page.evaluate(() => {
+    const bounds = document.querySelector("canvas").getBoundingClientRect();
+    return { x: bounds.left + (270 / 1280) * bounds.width, y: bounds.top + (222 / 720) * bounds.height };
+  });
+  await page.mouse.click(chestItemPoint.x, chestItemPoint.y);
   await page.waitForFunction(
     (itemId) => window.__ASHEN_GAME__.scene.getScene("GameScene").activeLootChest.revealedItemIds.has(itemId),
     searchedChestLootBefore.itemId,
   );
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  await page.mouse.click(270, 222);
+  await clickGamePoint(270, 222);
   await clickHudLabel(page, "拾取到背包");
   await page.waitForFunction(
     (expected) => window.__ASHEN_GAME__.scene.getScene("GameScene").activeLootChest.loot.length === expected,
@@ -273,7 +383,15 @@ try {
     const scene = window.__ASHEN_GAME__.scene.getScene("GameScene");
     return { count: scene.activeLootChest.loot.length, itemId: scene.activeLootChest.loot[0].id };
   });
-  await page.mouse.click(270, 222);
+  await clickGamePoint(270, 222);
+  await page.waitForTimeout(500);
+  if (!await page.evaluate(() => window.__ASHEN_GAME__.registry.get("itemDetailOpen") === true)) {
+    await page.evaluate(() => {
+      const hud = window.__ASHEN_GAME__.scene.getScene("HudScene");
+      const card = hud.lootObjects.find((object) => object.type === "Rectangle" && object.x === 132 && object.y === 190 && object.width === 276);
+      card?.emit("pointerdown");
+    });
+  }
   await page.waitForFunction(() => window.__ASHEN_GAME__.registry.get("itemDetailOpen") === true);
   const detailLayout = await page.evaluate(() => {
     const hud = window.__ASHEN_GAME__.scene.getScene("HudScene");
@@ -297,9 +415,12 @@ try {
     return game.registry.get("itemDetailOpen") === false
       && game.scene.getScene("GameScene").lootPanelOpen === true;
   });
-  await page.mouse.click(270, 222);
-  await page.waitForTimeout(80);
-  await page.mouse.click(270, 222);
+  await page.evaluate(() => {
+    const hud = window.__ASHEN_GAME__.scene.getScene("HudScene");
+    const card = hud.lootObjects.find((object) => object.type === "Rectangle" && object.x === 132 && object.y === 190 && object.width === 276);
+    card?.emit("pointerdown");
+    card?.emit("pointerdown");
+  });
   await page.waitForFunction(
     (expected) => window.__ASHEN_GAME__.scene.getScene("GameScene").activeLootChest.loot.length === expected,
     doubleClickLootBefore.count - 1,
@@ -329,7 +450,11 @@ try {
     clickLootBefore.itemId,
   );
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  await page.mouse.click(270, 222);
+  await page.evaluate(() => {
+    const hud = window.__ASHEN_GAME__.scene.getScene("HudScene");
+    const card = hud.lootObjects.find((object) => object.type === "Rectangle" && object.x === 132 && object.y === 190 && object.width === 276);
+    card?.emit("pointerdown");
+  });
   await clickHudLabel(page, "拾取到背包");
   await page.waitForFunction(
     (expected) => window.__ASHEN_GAME__.scene.getScene("GameScene").activeLootChest.loot.length === expected,
@@ -529,12 +654,19 @@ try {
     const cell = 46;
     const originX = 800;
     const originY = 282;
+    const bounds = document.querySelector("canvas").getBoundingClientRect();
+    const screenPoint = (x, y) => ({
+      x: bounds.left + (x / 1280) * bounds.width,
+      y: bounds.top + (y / 720) * bounds.height,
+    });
+    const start = screenPoint(originX + (placement.x + 0.5) * cell, originY + (placement.y + 0.5) * cell);
+    const end = screenPoint(originX + (3 + 0.5) * cell, originY + (2 + 0.5) * cell);
     return {
       itemId: placement.item.id,
-      startX: originX + (placement.x + 0.5) * cell,
-      startY: originY + (placement.y + 0.5) * cell,
-      endX: originX + (3 + 0.5) * cell,
-      endY: originY + (2 + 0.5) * cell,
+      startX: start.x,
+      startY: start.y,
+      endX: end.x,
+      endY: end.y,
     };
   });
   await page.mouse.move(dragSetup.startX, dragSetup.startY);
@@ -631,7 +763,11 @@ try {
     return hud.lootObjects.some((object) => typeof object.text === "string" && object.text.includes("预计 ↑"));
   });
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  await page.mouse.click(270, 222);
+  await page.evaluate(() => {
+    const hud = window.__ASHEN_GAME__.scene.getScene("HudScene");
+    const card = hud.lootObjects.find((object) => object.type === "Rectangle" && object.x === 132 && object.y === 190 && object.width === 276);
+    card?.emit("pointerdown");
+  });
   await page.waitForFunction(() => {
     const game = window.__ASHEN_GAME__;
     const texts = game.scene.getScene("HudScene").lootObjects

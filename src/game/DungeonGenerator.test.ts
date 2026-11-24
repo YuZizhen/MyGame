@@ -21,18 +21,21 @@ function reachableFloorCount(dungeon: ReturnType<typeof generateDungeon>): Set<n
 }
 
 describe("generateDungeon", () => {
-  it("generates deterministic but seed-dependent ashen layouts", () => {
-    const first = generateDungeon(42);
-    const repeated = generateDungeon(42);
-    const different = generateDungeon(43);
+  it("generates one deterministic canonical ashen layout", () => {
+    const first = generateDungeon();
+    const repeated = generateDungeon();
 
     expect(repeated.tiles).toEqual(first.tiles);
     expect(repeated.rooms).toEqual(first.rooms);
-    expect(different.tiles).not.toEqual(first.tiles);
+    expect(first.width).toBe(144);
+    expect(first.height).toBe(88);
+    expect(first.rooms).toHaveLength(24);
+    expect(first.startRoom).toMatchObject({ gridX: 0, gridY: 3, isStart: true });
+    expect(first.bossRoom).toMatchObject({ gridX: 5, gridY: 0, isBoss: true });
   });
 
   it("uses varied irregular room silhouettes and solid interior obstacles", () => {
-    const dungeon = generateDungeon(20261122);
+    const dungeon = generateDungeon();
     const shapes = new Set(dungeon.rooms.map((room) => room.shape));
     const obstacleCount = dungeon.tiles.filter((tile) => tile === 2).length;
 
@@ -44,24 +47,20 @@ describe("generateDungeon", () => {
     expect(dungeon.tiles[dungeon.bossRoom.centerY * dungeon.width + dungeon.bossRoom.centerX]).toBe(1);
   });
 
-  it("keeps every floor tile and room center connected across many seeds", () => {
-    for (let seed = 1; seed <= 64; seed += 1) {
-      const dungeon = generateDungeon(seed);
-      const reachable = reachableFloorCount(dungeon);
-      expect(reachable.size, `seed ${seed} contains disconnected floor islands`).toBe(
-        dungeon.tiles.filter((tile) => tile === 1).length,
-      );
-      for (const room of dungeon.rooms) {
-        expect(reachable.has(room.centerY * dungeon.width + room.centerX)).toBe(true);
-      }
-      for (let x = 0; x < dungeon.width; x += 1) {
-        expect(dungeon.tiles[x]).toBe(0);
-        expect(dungeon.tiles[(dungeon.height - 1) * dungeon.width + x]).toBe(0);
-      }
-      for (let y = 0; y < dungeon.height; y += 1) {
-        expect(dungeon.tiles[y * dungeon.width]).toBe(0);
-        expect(dungeon.tiles[y * dungeon.width + dungeon.width - 1]).toBe(0);
-      }
+  it("keeps every floor tile and room center connected", () => {
+    const dungeon = generateDungeon();
+    const reachable = reachableFloorCount(dungeon);
+    expect(reachable.size).toBe(dungeon.tiles.filter((tile) => tile === 1).length);
+    for (const room of dungeon.rooms) {
+      expect(reachable.has(room.centerY * dungeon.width + room.centerX)).toBe(true);
+    }
+    for (let x = 0; x < dungeon.width; x += 1) {
+      expect(dungeon.tiles[x]).toBe(0);
+      expect(dungeon.tiles[(dungeon.height - 1) * dungeon.width + x]).toBe(0);
+    }
+    for (let y = 0; y < dungeon.height; y += 1) {
+      expect(dungeon.tiles[y * dungeon.width]).toBe(0);
+      expect(dungeon.tiles[y * dungeon.width + dungeon.width - 1]).toBe(0);
     }
   });
 });

@@ -8,8 +8,12 @@ import {
   createEmptyContainer,
   discardStoredItem,
   equipWeaponFromContainer,
+  isRangedWeapon,
+  itemCurrentValue,
   listContainerItems,
+  loadoutAmmoCount,
   loadoutCorruption,
+  loadoutMedicineCount,
   moveStoredItem,
   moveStoredItemToPosition,
   rotateStoredItem,
@@ -22,8 +26,10 @@ import {
   type StoredContainerSlot,
   type WeaponStats,
 } from "../domain/loadout";
+import { consumeAmmo, consumeMedicine, findQuickMedicine, listMedicineSelections, type MedicineSelection } from "../domain/combatInventory";
 import {
   commitExtraction,
+  commitRunLoss,
   createDefaultProfile,
   loadProfile,
   type PlayerProfile,
@@ -51,7 +57,7 @@ const PLAYER_SPEED = 180;
 const PLAYER_MAX_HP = 100;
 const DEFAULT_VISION_RADIUS = 8;
 const BOSS_VISION_RADIUS = 13;
-const STARTER_WEAPON_STATS: WeaponStats = { damage: 30, attackIntervalMs: 480, critChance: 0 };
+const STARTER_WEAPON_STATS: WeaponStats = { kind: "melee", damage: 18, attackIntervalMs: 520, critChance: 0 };
 
 type MobKind = "scavenger" | "stalker" | "brute" | "boss";
 
@@ -93,6 +99,18 @@ interface LootItemSearchState {
   duration: number;
 }
 
+interface ReloadAction {
+  weaponId: string;
+  startedAt: number;
+  completesAt: number;
+}
+
+interface MedicalAction {
+  selection: MedicineSelection;
+  startedAt: number;
+  completesAt: number;
+}
+
 interface ControlKeys {
   up: Phaser.Input.Keyboard.Key;
   left: Phaser.Input.Keyboard.Key;
@@ -102,6 +120,7 @@ interface ControlKeys {
   roll: Phaser.Input.Keyboard.Key;
   interact: Phaser.Input.Keyboard.Key;
   usePotion: Phaser.Input.Keyboard.Key;
+  emergencyMelee: Phaser.Input.Keyboard.Key;
   restart: Phaser.Input.Keyboard.Key;
 }
 
@@ -136,8 +155,11 @@ export class GameScene extends Phaser.Scene {
   private mapState!: RuntimeMapState;
   private exploredRooms = new Set<number>();
   private hp = PLAYER_MAX_HP;
-  private potions = 2;
-  private potionReadyAt = 0;
+  private reloadAction?: ReloadAction;
+  private medicalAction?: MedicalAction;
+  private selectedWeaponSlot: 1 | 2 = 1;
+  private emergencyMeleeSelected = false;
+  private selectedMedicineId?: string;
   private facing = 0;
   private attackReadyAt = 0;
   private rollReadyAt = 0;
@@ -188,20 +210,14 @@ export class GameScene extends Phaser.Scene {
     super("GameScene");
   }
 
-  create(): void {
+  create(data?: { runId?: string }): void {
     this.registry.set("appMode", "run");
-    this.resetRuntimeState();
+    this.resetRuntimeState(data?.runId);
+    this.applyActiveRunLoadout();
     this.createTextures();
     const searchParams = new URLSearchParams(window.location.search);
     const qaMode = import.meta.env.DEV ? searchParams.get("qa") : null;
-    const seedParameter = searchParams.get("seed");
-    const requestedSeed = seedParameter === null ? undefined : Number(seedParameter);
-    const dungeonSeed = requestedSeed !== undefined && Number.isSafeInteger(requestedSeed) && requestedSeed >= 0
-      ? requestedSeed
-      : qaMode
-        ? 20261119
-        : Date.now() >>> 0;
-    this.dungeon = generateDungeon(dungeonSeed);
+    this.dungeon = generateDungeon();
     this.worldWidth = this.dungeon.width * TILE_SIZE;
     this.worldHeight = this.dungeon.height * TILE_SIZE;
 
@@ -351,6 +367,8 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
+    this.updateCombatAction(time);
+
     if (this.qaOpenExtraction && this.scene.isActive("HudScene")) {
       this.qaOpenExtraction = false;
       this.openExtractionPanel();
@@ -429,10 +447,10 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private resetRuntimeState(): void {
+  private resetRuntimeState(requestedRunId?: string): void {
     this.mobs = [];
     this.chests = [];
-    this.runId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    this.runId = requestedRunId ?? globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     this.loadout = {
       weapon: {
         id: `${this.runId}:starter_sword`,
@@ -452,8 +470,11 @@ export class GameScene extends Phaser.Scene {
     };
     this.exploredRooms = new Set<number>();
     this.hp = PLAYER_MAX_HP;
-    this.potions = 2;
-    this.potionReadyAt = 0;
+    this.reloadAction = undefined;
+    this.medicalAction = undefined;
+    this.selectedWeaponSlot = 1;
+    this.emergencyMeleeSelected = false;
+    this.selectedMedicineId = undefined;
     this.facing = 0;
     this.attackReadyAt = 0;
     this.rollReadyAt = 0;
@@ -498,6 +519,26 @@ export class GameScene extends Phaser.Scene {
     this.returnedLootCounter = 0;
     this.runState = "playing";
     this.currentObjective = "探索灰烬地穴，寻找遗迹守门人";
+  }
+
+  private applyActiveRunLoadout(): void {
+    const loaded = loadProfile(window.localStorage);
+    if (loaded.profile.activeRun?.id !== this.runId) return;
+    for (const item of loaded.profile.activeRun.deployedItems) {
+      if (item.tags.includes("weapon")) {
+        this.loadout = { ...this.loadout, weapon: { ...item, tags: [...item.tags], weaponStats: item.weaponStats ? { ...item.weaponStats } : undefined } };
+        continue;
+      }
+      const rigPlacement = autoPlaceItem(this.loadout.rig, item);
+      if (rigPlacement.ok) {
+        this.loadout = { ...this.loadout, rig: rigPlacement.value };
+        continue;
+      }
+      if (this.loadout.backpack) {
+        const backpackPlacement = autoPlaceItem(this.loadout.backpack, item);
+        if (backpackPlacement.ok) this.loadout = { ...this.loadout, backpack: backpackPlacement.value };
+      }
+    }
   }
 
   private createTextures(): void {
@@ -1184,6 +1225,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private openChestPanel(chest: ChestState): void {
+    this.cancelCombatAction();
     if (!this.canOpenLoadout()) {
       this.rejectLoadoutOpen();
       return;
@@ -1384,7 +1426,9 @@ export class GameScene extends Phaser.Scene {
     let successMessage: string;
 
     if (payload.source === "weapon") {
-      result = unequipWeaponToBackpack(this.loadout);
+      result = this.loadout.weapon?.value === 0
+        ? { ok: true, value: { ...this.loadout, weapon: undefined } }
+        : unequipWeaponToBackpack(this.loadout);
       successMessage = "武器已放入背包";
     } else {
       const sourceContainer = this.loadout[payload.source];
@@ -1393,7 +1437,8 @@ export class GameScene extends Phaser.Scene {
         : undefined;
       if (!item) return;
       if (item.tags.includes("weapon")) {
-        result = equipWeaponFromContainer(this.loadout, item.id, payload.source);
+        const equippableLoadout = this.loadout.weapon?.value === 0 ? { ...this.loadout, weapon: undefined } : this.loadout;
+        result = equipWeaponFromContainer(equippableLoadout, item.id, payload.source);
         successMessage = `已装备 ${item.name}`;
       } else {
         const target: StoredContainerSlot = payload.source === "backpack" ? "rig" : "backpack";
@@ -1539,6 +1584,10 @@ export class GameScene extends Phaser.Scene {
       icon: item.icon ?? "pouch",
       tags: [...item.tags],
       weaponStats: item.weaponStats ? { ...item.weaponStats } : undefined,
+      quantity: item.quantity,
+      maxQuantity: item.maxQuantity,
+      ammoType: item.ammoType,
+      medicalStats: item.medicalStats ? { ...item.medicalStats } : undefined,
     };
   }
 
@@ -1561,6 +1610,10 @@ export class GameScene extends Phaser.Scene {
       rarity: item.rarity,
       icon: item.icon,
       weaponStats: item.weaponStats ? { ...item.weaponStats } : undefined,
+      quantity: item.quantity,
+      maxQuantity: item.maxQuantity,
+      ammoType: item.ammoType,
+      medicalStats: item.medicalStats ? { ...item.medicalStats } : undefined,
     };
   }
 
@@ -1613,6 +1666,7 @@ export class GameScene extends Phaser.Scene {
       roll: Phaser.Input.Keyboard.KeyCodes.SHIFT,
       interact: Phaser.Input.Keyboard.KeyCodes.E,
       usePotion: Phaser.Input.Keyboard.KeyCodes.Q,
+      emergencyMelee: Phaser.Input.Keyboard.KeyCodes.V,
       restart: Phaser.Input.Keyboard.KeyCodes.R,
     }) as ControlKeys;
     this.input.keyboard!.addCapture([
@@ -1630,7 +1684,10 @@ export class GameScene extends Phaser.Scene {
   private handleInventoryShortcut(): void {
     if (this.runState !== "playing" || this.extractionPanelOpen || this.pauseMenuOpen) return;
     if (this.lootPanelOpen) this.closeLootPanel();
-    else this.openInventoryPanel();
+    else {
+      this.cancelCombatAction("打开行囊，动作已取消");
+      this.openInventoryPanel();
+    }
   }
 
   private handleLootCloseShortcut(): void {
@@ -1653,6 +1710,10 @@ export class GameScene extends Phaser.Scene {
     }
     if (!this.lootPanelOpen) {
       if (event.code === "Escape") this.setPauseMenuOpen(true);
+      else if (event.code === "Digit1" || event.code === "Numpad1") this.selectWeaponSlot(1);
+      else if (event.code === "Digit2" || event.code === "Numpad2") this.selectWeaponSlot(2);
+      else if (event.code === "Digit3" || event.code === "Numpad3") this.selectMedicineSlot(0);
+      else if (event.code === "Digit4" || event.code === "Numpad4") this.selectMedicineSlot(1);
       return;
     }
     if (event.code === "Escape" || event.code === "KeyE") {
@@ -1667,6 +1728,57 @@ export class GameScene extends Phaser.Scene {
     if (slottedItem && this.activeLootChest) {
       this.handleLootTake({ chestId: this.activeLootChest.id, itemId: slottedItem.id });
     }
+  }
+
+  private storedWeapon(): { item: ItemInstance; source: StoredContainerSlot } | undefined {
+    for (const source of ["rig", "backpack"] as const) {
+      const container = this.loadout[source];
+      const item = container && listContainerItems(container).find((candidate) => candidate.tags.includes("weapon"));
+      if (item) return { item, source };
+    }
+    return undefined;
+  }
+
+  private selectWeaponSlot(slot: 1 | 2): void {
+    if (slot === this.selectedWeaponSlot) return;
+    this.cancelCombatAction("切换武器，动作已取消");
+    const stored = this.storedWeapon();
+    if (!stored) {
+      if (slot === 2) {
+        this.selectedWeaponSlot = 2;
+        this.emergencyMeleeSelected = true;
+        this.game.events.emit("hud:banner", "已切换至应急短刃");
+      } else {
+        this.selectedWeaponSlot = 1;
+        this.emergencyMeleeSelected = false;
+        this.game.events.emit("hud:banner", `已切换至 ${this.loadout.weapon?.name ?? "应急短刃"}`);
+      }
+      this.emitHudState();
+      return;
+    }
+    const equippable = this.loadout.weapon?.value === 0 ? { ...this.loadout, weapon: undefined } : this.loadout;
+    const result = equipWeaponFromContainer(equippable, stored.item.id, stored.source);
+    if (!result.ok) {
+      this.game.events.emit("hud:banner", "空间不足，无法切换武器");
+      return;
+    }
+    this.loadout = result.value;
+    this.selectedWeaponSlot = slot;
+    this.emergencyMeleeSelected = false;
+    this.game.events.emit("audio:event", "inventory.item.place");
+    this.game.events.emit("hud:banner", `已切换至 ${this.loadout.weapon?.name ?? "应急短刃"}`);
+    this.emitHudState();
+  }
+
+  private selectMedicineSlot(index: 0 | 1): void {
+    const selection = listMedicineSelections(this.loadout)[index];
+    if (!selection) {
+      this.game.events.emit("hud:banner", `${index + 3} 号快捷栏没有医疗物资`);
+      return;
+    }
+    this.selectedMedicineId = selection.item.id;
+    this.game.events.emit("hud:banner", `已选择 ${selection.item.name} · 按 Q 使用`);
+    this.emitHudState();
   }
 
   private readonly handlePauseResume = (): void => this.setPauseMenuOpen(false);
@@ -1714,7 +1826,9 @@ export class GameScene extends Phaser.Scene {
       if (this.tryExit()) return;
     }
 
-    if (Phaser.Input.Keyboard.JustDown(this.controls.usePotion)) this.tryUsePotion(time);
+    if (Phaser.Input.Keyboard.JustDown(this.controls.usePotion)) this.startMedicalUse(time);
+    if (Phaser.Input.Keyboard.JustDown(this.controls.restart)) this.startReload(time);
+    if (Phaser.Input.Keyboard.JustDown(this.controls.emergencyMelee)) this.performMeleeAttack(time, STARTER_WEAPON_STATS);
 
     if (time < this.controlLockedUntil) {
       this.player.setVelocity(0, 0);
@@ -1750,25 +1864,22 @@ export class GameScene extends Phaser.Scene {
     if (Phaser.Input.Keyboard.JustDown(this.controls.attack)) this.performAttack(time);
   }
 
-  private tryUsePotion(time: number): void {
-    if (time < this.controlLockedUntil || time < this.rollingUntil || time < this.potionReadyAt) return;
+  private startMedicalUse(time: number): void {
+    if (time < this.controlLockedUntil || time < this.rollingUntil || this.reloadAction || this.medicalAction) return;
     if (this.hp >= PLAYER_MAX_HP) {
-      this.game.events.emit("hud:banner", "生命已满，无需使用药剂");
+      this.game.events.emit("hud:banner", "生命已满，无需使用医疗物资");
       return;
     }
-    if (this.potions <= 0) {
-      this.game.events.emit("hud:banner", "药剂已耗尽");
+    const selection = findQuickMedicine(this.loadout, this.selectedMedicineId);
+    if (!selection?.item.medicalStats) {
+      this.game.events.emit("hud:banner", "没有可用医疗物资");
       return;
     }
-    const before = this.hp;
-    this.potions -= 1;
-    this.hp = Math.min(PLAYER_MAX_HP, this.hp + 35);
-    this.potionReadyAt = time + 650;
-    this.controlLockedUntil = Math.max(this.controlLockedUntil, time + 450);
-    const restored = Math.ceil(this.hp - before);
-    this.showFloatingText(this.player.x, this.player.y - 48, `+${restored}`, "#62d48c");
-    this.game.events.emit("audio:event", "player.heal");
-    this.game.events.emit("hud:banner", `使用药剂 · 恢复 ${restored} 生命`);
+    const duration = Math.round(selection.item.medicalStats.useTimeMs * (selection.quickAccess ? 1 : 1.25));
+    this.medicalAction = { selection, startedAt: time, completesAt: time + duration };
+    this.controlLockedUntil = time + duration;
+    this.player.setVelocity(0, 0);
+    this.game.events.emit("hud:banner", `正在使用 ${selection.item.name}`);
     this.emitHudState();
   }
 
@@ -1780,6 +1891,15 @@ export class GameScene extends Phaser.Scene {
   private performAttack(time: number): void {
     if (this.runState !== "playing" || this.pauseMenuOpen || time < this.attackReadyAt || time < this.controlLockedUntil) return;
     const weaponStats = this.currentWeaponStats();
+    if (!this.emergencyMeleeSelected && isRangedWeapon(this.loadout.weapon)) {
+      this.performRangedAttack(time);
+      return;
+    }
+    this.performMeleeAttack(time, weaponStats);
+  }
+
+  private performMeleeAttack(time: number, weaponStats: WeaponStats): void {
+    if (time < this.attackReadyAt || time < this.controlLockedUntil) return;
     this.attackReadyAt = time + weaponStats.attackIntervalMs;
     this.game.events.emit("audio:event", "player.melee.swing");
 
@@ -1821,8 +1941,115 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  private performRangedAttack(time: number): void {
+    const weapon = this.loadout.weapon;
+    const stats = weapon?.weaponStats;
+    if (!weapon || !stats || stats.kind !== "ranged" || !stats.ammoType) return;
+    const loadedAmmo = stats.loadedAmmo ?? 0;
+    if (loadedAmmo <= 0) {
+      if (loadoutAmmoCount(this.loadout, stats.ammoType) > 0) this.startReload(time);
+      else {
+        this.game.events.emit("audio:event", "weapon.empty");
+        this.game.events.emit("hud:banner", "弹药耗尽 · 已使用应急短刃");
+        this.performMeleeAttack(time, STARTER_WEAPON_STATS);
+      }
+      return;
+    }
+    this.attackReadyAt = time + stats.attackIntervalMs;
+    this.loadout = { ...this.loadout, weapon: { ...weapon, weaponStats: { ...stats, loadedAmmo: loadedAmmo - 1 } } };
+    const range = stats.range ?? 720;
+    const target = this.mobs
+      .filter((mob) => !mob.dead && mob.sprite.active && (!mob.isBoss || this.bossEncounterActive))
+      .map((mob) => ({
+        mob,
+        distance: Phaser.Math.Distance.Between(this.player.x, this.player.y, mob.sprite.x, mob.sprite.y),
+        angle: Math.abs(Phaser.Math.Angle.Wrap(Phaser.Math.Angle.Between(this.player.x, this.player.y, mob.sprite.x, mob.sprite.y) - this.facing)),
+      }))
+      .filter((entry) => entry.distance <= range && entry.angle <= Phaser.Math.DegToRad(10) && this.hasLineOfSight(entry.mob.sprite.x, entry.mob.sprite.y))
+      .sort((first, second) => first.distance - second.distance)[0];
+    const endX = target?.mob.sprite.x ?? this.player.x + Math.cos(this.facing) * range;
+    const endY = target?.mob.sprite.y ?? this.player.y + Math.sin(this.facing) * range;
+    const tracer = this.add.graphics().setDepth(this.player.y + 2);
+    tracer.lineStyle(3, 0xf3cf83, 0.9).lineBetween(this.player.x, this.player.y, endX, endY);
+    this.tweens.add({ targets: tracer, alpha: 0, duration: 90, onComplete: () => tracer.destroy() });
+    this.game.events.emit("audio:event", "player.ranged.shot");
+    if (target) {
+      const critical = Math.random() < stats.critChance;
+      this.damageMob(target.mob, Math.round(stats.damage * (critical ? 1.5 : 1)), critical);
+    }
+    this.emitHudState();
+  }
+
+  private hasLineOfSight(targetX: number, targetY: number): boolean {
+    const distance = Phaser.Math.Distance.Between(this.player.x, this.player.y, targetX, targetY);
+    const steps = Math.max(1, Math.ceil(distance / 24));
+    for (let step = 1; step < steps; step += 1) {
+      const ratio = step / steps;
+      const tileX = Math.floor(Phaser.Math.Linear(this.player.x, targetX, ratio) / TILE_SIZE);
+      const tileY = Math.floor(Phaser.Math.Linear(this.player.y, targetY, ratio) / TILE_SIZE);
+      if (this.dungeon.tiles[tileY * this.dungeon.width + tileX] !== 1) return false;
+    }
+    return true;
+  }
+
+  private startReload(time: number): void {
+    if (this.reloadAction || this.medicalAction || time < this.rollingUntil) return;
+    if (this.emergencyMeleeSelected) return;
+    const weapon = this.loadout.weapon;
+    const stats = weapon?.weaponStats;
+    if (!weapon || stats?.kind !== "ranged" || !stats.ammoType || !stats.magazineSize || !stats.reloadMs) return;
+    if ((stats.loadedAmmo ?? 0) >= stats.magazineSize || loadoutAmmoCount(this.loadout, stats.ammoType) <= 0) return;
+    this.reloadAction = { weaponId: weapon.id, startedAt: time, completesAt: time + stats.reloadMs };
+    this.controlLockedUntil = time + stats.reloadMs;
+    this.player.setVelocity(0, 0);
+    this.game.events.emit("audio:event", "weapon.reload.start");
+    this.emitHudState();
+  }
+
+  private updateCombatAction(time: number): void {
+    if (this.reloadAction && time >= this.reloadAction.completesAt) {
+      const weapon = this.loadout.weapon;
+      const stats = weapon?.weaponStats;
+      if (weapon?.id === this.reloadAction.weaponId && stats?.kind === "ranged" && stats.ammoType && stats.magazineSize) {
+        const needed = stats.magazineSize - (stats.loadedAmmo ?? 0);
+        const result = consumeAmmo(this.loadout, stats.ammoType, needed);
+        this.loadout = {
+          ...result.loadout,
+          weapon: { ...weapon, weaponStats: { ...stats, loadedAmmo: (stats.loadedAmmo ?? 0) + result.consumed } },
+        };
+        this.game.events.emit("audio:event", "weapon.reload.complete");
+      }
+      this.reloadAction = undefined;
+      this.emitHudState();
+    }
+    if (this.medicalAction && time >= this.medicalAction.completesAt) {
+      const action = this.medicalAction;
+      const nextLoadout = consumeMedicine(this.loadout, action.selection);
+      if (nextLoadout && action.selection.item.medicalStats) {
+        const before = this.hp;
+        this.loadout = nextLoadout;
+        this.hp = Math.min(PLAYER_MAX_HP, this.hp + action.selection.item.medicalStats.healAmount);
+        const restored = Math.ceil(this.hp - before);
+        this.showFloatingText(this.player.x, this.player.y - 48, `+${restored}`, "#62d48c");
+        this.game.events.emit("audio:event", "player.heal");
+        this.game.events.emit("hud:banner", `${action.selection.item.name} · 恢复 ${restored} 生命`);
+      }
+      this.medicalAction = undefined;
+      this.emitHudState();
+    }
+  }
+
+  private cancelCombatAction(message?: string): void {
+    if (!this.reloadAction && !this.medicalAction) return;
+    this.reloadAction = undefined;
+    this.medicalAction = undefined;
+    this.controlLockedUntil = Math.min(this.controlLockedUntil, this.time.now);
+    if (message) this.game.events.emit("hud:banner", message);
+    this.emitHudState();
+  }
+
   private currentWeaponStats(): WeaponStats {
-    return this.loadout.weapon?.weaponStats ?? STARTER_WEAPON_STATS;
+    return this.emergencyMeleeSelected ? STARTER_WEAPON_STATS : this.loadout.weapon?.weaponStats ?? STARTER_WEAPON_STATS;
   }
 
   private damageMob(mob: MobState, amount: number, critical = false): void {
@@ -1973,6 +2200,7 @@ export class GameScene extends Phaser.Scene {
     if (this.runState !== "playing" || this.time.now < this.invulnerableUntil) return;
     const interruptedSearch = Boolean(this.searchChest);
     this.cancelChestSearch();
+    this.cancelCombatAction("受击，动作已中断");
     if (interruptedSearch) this.searchRequiresRelease = true;
     this.hp = Math.max(0, this.hp - amount);
     this.invulnerableUntil = this.time.now + 350;
@@ -2268,8 +2496,8 @@ export class GameScene extends Phaser.Scene {
       mode: extraction.mode,
       retainedItemCount: retainedItems.length,
       droppedItemCount: droppedItems.length,
-      retainedValue: retainedItems.reduce((total, item) => total + item.value, 0),
-      droppedValue: droppedItems.reduce((total, item) => total + item.value, 0),
+      retainedValue: retainedItems.reduce((total, item) => total + itemCurrentValue(item), 0),
+      droppedValue: droppedItems.reduce((total, item) => total + itemCurrentValue(item), 0),
       corruptionBefore: extraction.corruptionBefore,
       corruptionAfter: extraction.corruptionAfter,
     };
@@ -2277,6 +2505,7 @@ export class GameScene extends Phaser.Scene {
 
   private openExtractionPanel(): void {
     if (this.runState !== "playing" || this.extractionPanelOpen) return;
+    this.cancelCombatAction("准备撤离，动作已取消");
     this.closeLootPanel();
     this.extractionPanelOpen = true;
     const state: ExtractionUiState = {
@@ -2317,7 +2546,7 @@ export class GameScene extends Phaser.Scene {
         window.localStorage,
         extraction,
         Date.now(),
-        `${this.runId}:${mode}`,
+        this.runId,
       );
       if (write.ok) {
         persisted = true;
@@ -2379,6 +2608,12 @@ export class GameScene extends Phaser.Scene {
   }
 
   private handleDefeat(): void {
+    try {
+      const loss = commitRunLoss(window.localStorage, this.runId);
+      if (loss.ok) this.publishProfileSummary(loss.profile, loss.loadStatus);
+    } catch {
+      this.publishProfileFailure("unavailable");
+    }
     this.runState = "lost";
     this.player.setVelocity(0, 0);
     this.player.setTint(0x6f5151).setAlpha(0.7);
@@ -2451,6 +2686,31 @@ export class GameScene extends Phaser.Scene {
 
   private emitHudState(): void {
     if (!this.boss) return;
+    const weaponStats = this.currentWeaponStats();
+    const ranged = !this.emergencyMeleeSelected && isRangedWeapon(this.loadout.weapon);
+    const activeWeaponName = this.emergencyMeleeSelected ? "应急短刃" : this.loadout.weapon?.name ?? "应急短刃";
+    const storedWeapon = this.storedWeapon()?.item;
+    const medicineSlots = listMedicineSelections(this.loadout).slice(0, 2);
+    const selectedMedicine = findQuickMedicine(this.loadout, this.selectedMedicineId);
+    const firstWeaponLabel = this.selectedWeaponSlot === 1
+      ? activeWeaponName
+      : storedWeapon?.name ?? this.loadout.weapon?.name ?? "主武器";
+    const secondWeaponLabel = this.selectedWeaponSlot === 2
+      ? activeWeaponName
+      : storedWeapon?.name ?? "应急短刃";
+    const timedAction = this.reloadAction
+      ? {
+          kind: "reload" as const,
+          label: `正在换弹 · ${this.loadout.weapon?.name ?? "主武器"}`,
+          progress: Phaser.Math.Clamp((this.time.now - this.reloadAction.startedAt) / (this.reloadAction.completesAt - this.reloadAction.startedAt), 0, 1),
+        }
+      : this.medicalAction
+        ? {
+            kind: "heal" as const,
+            label: `正在使用 · ${this.medicalAction.selection.item.name}`,
+            progress: Phaser.Math.Clamp((this.time.now - this.medicalAction.startedAt) / (this.medicalAction.completesAt - this.medicalAction.startedAt), 0, 1),
+          }
+        : undefined;
     const state: HudState = {
       hp: this.hp,
       maxHp: PLAYER_MAX_HP,
@@ -2460,10 +2720,24 @@ export class GameScene extends Phaser.Scene {
       bossHp: this.boss.hp,
       bossMaxHp: this.boss.maxHp,
       bossActive: this.bossEncounterActive && !this.bossDefeated,
-      potions: this.potions,
+      potions: loadoutMedicineCount(this.loadout),
       corruption: loadoutCorruption(this.loadout),
+      weaponName: activeWeaponName,
+      weaponKind: ranged ? "ranged" : "melee",
+      loadedAmmo: ranged ? weaponStats.loadedAmmo ?? 0 : 0,
+      magazineSize: ranged ? weaponStats.magazineSize ?? 0 : 0,
+      reserveAmmo: ranged && weaponStats.ammoType ? loadoutAmmoCount(this.loadout, weaponStats.ammoType) : 0,
+      quickSlots: [
+        { key: "1", label: firstWeaponLabel, kind: "weapon", selected: this.selectedWeaponSlot === 1 },
+        { key: "2", label: secondWeaponLabel, kind: "weapon", selected: this.selectedWeaponSlot === 2 },
+        { key: "3", label: medicineSlots[0]?.item.name ?? "空", kind: "medicine", selected: selectedMedicine?.item.id === medicineSlots[0]?.item.id, quantity: medicineSlots[0] ? medicineSlots[0].item.quantity ?? 1 : undefined },
+        { key: "4", label: medicineSlots[1]?.item.name ?? "空", kind: "medicine", selected: selectedMedicine?.item.id === medicineSlots[1]?.item.id, quantity: medicineSlots[1] ? medicineSlots[1].item.quantity ?? 1 : undefined },
+      ],
+      timedAction,
       rollReady: this.time.now >= this.rollReadyAt,
-      interactionPrompt: this.lootPanelOpen
+      interactionPrompt: timedAction
+        ? `${timedAction.label} ${Math.round(timedAction.progress * 100)}%`
+        : this.lootPanelOpen
         ? "Tab / Esc 关闭行囊"
         : this.searchChest
           ? `搜索中 ${Math.round(Phaser.Math.Clamp((this.time.now - this.searchStartedAt) / this.searchChest.searchDuration, 0, 1) * 100)}%`

@@ -12,12 +12,25 @@ export type ContainerKind = "rig" | "backpack" | "chest";
 export type StoredContainerSlot = "rig" | "backpack";
 export type ExtractionMode = "normal" | "drop_pack";
 export type ItemRarity = "common" | "magic" | "rare" | "red";
-export type ItemIcon = "gem" | "pouch" | "ring" | "blade" | "scroll" | "helm" | "axe" | "armor" | "relic";
+export type ItemIcon = "gem" | "pouch" | "ring" | "blade" | "scroll" | "helm" | "axe" | "armor" | "relic" | "pistol" | "rifle" | "ammo" | "medkit";
+export type WeaponKind = "melee" | "ranged";
+export type AmmoType = "light" | "rifle";
 
 export interface WeaponStats {
   damage: number;
   attackIntervalMs: number;
   critChance: number;
+  kind?: WeaponKind;
+  range?: number;
+  magazineSize?: number;
+  loadedAmmo?: number;
+  reloadMs?: number;
+  ammoType?: AmmoType;
+}
+
+export interface MedicalStats {
+  healAmount: number;
+  useTimeMs: number;
 }
 
 export interface ItemInstance {
@@ -32,6 +45,10 @@ export interface ItemInstance {
   rarity?: ItemRarity;
   icon?: ItemIcon;
   weaponStats?: WeaponStats;
+  quantity?: number;
+  maxQuantity?: number;
+  ammoType?: AmmoType;
+  medicalStats?: MedicalStats;
 }
 
 export interface PocketDefinition {
@@ -176,6 +193,30 @@ export function weaponDamagePerSecond(item: Pick<ItemInstance, "weaponStats">): 
   const stats = item.weaponStats;
   if (!stats || stats.attackIntervalMs <= 0) return undefined;
   return (stats.damage * (1 + stats.critChance * 0.5) * 1000) / stats.attackIntervalMs;
+}
+
+export function isRangedWeapon(item: Pick<ItemInstance, "weaponStats"> | undefined): boolean {
+  return item?.weaponStats?.kind === "ranged";
+}
+
+export function itemCurrentValue(item: Pick<ItemInstance, "value" | "quantity" | "maxQuantity">): number {
+  if (item.quantity === undefined || item.maxQuantity === undefined) return item.value;
+  if (item.maxQuantity <= 0) return 0;
+  return Math.max(0, Math.round(item.value * item.quantity / item.maxQuantity));
+}
+
+export function loadoutAmmoCount(loadout: LoadoutState, ammoType: AmmoType): number {
+  return [
+    ...listContainerItems(loadout.rig),
+    ...(loadout.backpack ? listContainerItems(loadout.backpack) : []),
+  ].reduce((total, item) => item.tags.includes("ammo") && item.ammoType === ammoType ? total + (item.quantity ?? 0) : total, 0);
+}
+
+export function loadoutMedicineCount(loadout: LoadoutState): number {
+  return [
+    ...listContainerItems(loadout.rig),
+    ...(loadout.backpack ? listContainerItems(loadout.backpack) : []),
+  ].filter((item) => item.tags.includes("medicine") && item.medicalStats).length;
 }
 
 export function listContainerItems(container: ContainerState): readonly ItemInstance[] {
@@ -530,6 +571,7 @@ function snapshotItem(item: ItemInstance): ItemInstance {
     ...item,
     tags: [...item.tags],
     weaponStats: item.weaponStats ? { ...item.weaponStats } : undefined,
+    medicalStats: item.medicalStats ? { ...item.medicalStats } : undefined,
   };
 }
 

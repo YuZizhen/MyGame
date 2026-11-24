@@ -1,4 +1,4 @@
-import type { ExtractionMode, ItemIcon, ItemRarity, ItemTag, LoadoutState, WeaponStats } from "../domain/loadout";
+import type { AmmoType, ExtractionMode, ItemIcon, ItemRarity, ItemTag, LoadoutState, MedicalStats, WeaponStats } from "../domain/loadout";
 
 export type TileValue = 0 | 1 | 2;
 export type DungeonRoomShape = "rectangular" | "chamfered" | "cross" | "cavern" | "arena";
@@ -60,6 +60,10 @@ export interface LootItem {
   icon: ItemIcon;
   tags: readonly ItemTag[];
   weaponStats?: WeaponStats;
+  quantity?: number;
+  maxQuantity?: number;
+  ammoType?: AmmoType;
+  medicalStats?: MedicalStats;
 }
 
 export interface MapChestMarker {
@@ -121,6 +125,19 @@ export interface HudState {
   bossActive: boolean;
   potions: number;
   corruption: number;
+  weaponName: string;
+  weaponKind: "melee" | "ranged";
+  loadedAmmo: number;
+  magazineSize: number;
+  reserveAmmo: number;
+  quickSlots: readonly {
+    key: "1" | "2" | "3" | "4";
+    label: string;
+    kind: "weapon" | "medicine";
+    selected: boolean;
+    quantity?: number;
+  }[];
+  timedAction?: { kind: "reload" | "heal"; label: string; progress: number };
   rollReady: boolean;
   interactionPrompt: string;
   inventoryUsed: number;
