@@ -426,7 +426,7 @@ describe("deployment transactions", () => {
       activeRun: { id: "run-return", startedAt: 100, deployedItems: [pistol, ammo] },
     };
     const extraction = settleExtraction({
-      weapon: pistol,
+      rangedWeapon: pistol,
       rig: rigPlacement.value,
       backpack: createEmptyContainer(EXPEDITION_BACKPACK, "bag-return"),
     }, "normal");
@@ -439,12 +439,14 @@ describe("deployment transactions", () => {
     expect(settled.activeRun).toBeUndefined();
   });
 
-  it("rejects a second prepared weapon", () => {
+  it("allows one melee plus one ranged weapon but rejects a second weapon of the same kind", () => {
     const storage = new MemoryStorage();
     const axe = { ...pistol, id: "axe", icon: "axe" as const, weaponStats: { damage: 32, attackIntervalMs: 620, critChance: 0 } };
-    saveProfile(storage, { ...createDefaultProfile(), warehouse: [pistol, axe] });
+    const rifle = { ...pistol, id: "rifle", icon: "rifle" as const };
+    saveProfile(storage, { ...createDefaultProfile(), warehouse: [pistol, axe, rifle] });
 
     expect(commitPreparedToggle(storage, pistol.id).ok).toBe(true);
-    expect(commitPreparedToggle(storage, axe.id)).toEqual({ ok: false, error: "invalid_selection" });
+    expect(commitPreparedToggle(storage, axe.id).ok).toBe(true);
+    expect(commitPreparedToggle(storage, rifle.id)).toEqual({ ok: false, error: "invalid_selection" });
   });
 });

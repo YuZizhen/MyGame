@@ -63,7 +63,9 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - [x] Added a real tactical pause menu with resume, persistent audio settings, controls, and game introduction pages.
 - [x] Replaced free potion charges with physical bandages/medkits, timed use, interruption, and exact inventory consumption.
 - [x] Added physical ranged weapons, 60-round single-cell ammo stacks, timed reloads, reserve-ammo consumption, and emergency melee.
-- [x] Added `1–4` combat quick slots: weapon switching on `1/2`, medicine selection on `3/4`, and compact HUD feedback.
+- [x] Added fixed combat slots: `1` melee, `2` ranged, `3` medkit, and reserved `4` special potion, rendered as a compact bottom bar.
+- [x] Added a permanent right-bottom drop-pack exit that works before the Boss and a separate Boss-gated full-extraction portal.
+- [x] Split the loadout domain into independent melee/ranged weapon slots, including same-kind replacement, preparation validation, persistence, and extraction settlement.
 - [x] Added catalog purchasing, warehouse preparation, an atomic active-run ledger, deployment loss, and successful extraction return without duplicated value.
 - [x] Paused physics, scene time, tweens, player input, enemies, and active searches while the Esc menu is open.
 - [x] Added live loadout-corruption tracking to the combat HUD and pause overview with threshold-aware coloring.
@@ -111,8 +113,8 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 - Enemy obstacle avoidance is lightweight steering rather than full pathfinding; future dense or concave obstacle layouts require A* or a flow field.
 - Lava is currently a clearly non-walkable boundary material, not a damage floor.
 - The “交易行” is intentionally an offline NPC buyback market; real player listings require accounts, a trusted backend, and server-side validation.
-- The quick bar currently exposes one stored backup weapon and the first two ordered medical items; configurable bindings and manual slot assignment remain future work.
-- The fixed Boss portal offers both complete and drop-pack settlement choices at one location; a separate early drop-pack extraction point remains future work.
+- The special-potion slot is intentionally reserved and has no item category or use effect yet.
+- Extraction points are fixed and learnable, but the early drop-pack room is not yet visually distinguished with unique environmental art beyond its orange portal.
 
 ## Verification log
 
@@ -163,8 +165,9 @@ Evolve the current PvE prototype into a maintainable extraction-game foundation 
 | 2026-11-23 | Pause menu and potions | Headless Edge screenshots at 1280×720 | Passed; overview, settings, and game-introduction pages visually inspected over the paused dungeon |
 | 2026-11-23 | Corruption HUD cleanup | `npm run check` + `npm run test:e2e` | Passed; 67 tests, production build, and 12 Edge scenarios including live corruption and absence of the bottom control overlay |
 | 2026-11-23 | Corruption HUD cleanup | Headless Edge screenshot at 1280×720 | Passed; corruption 27 renders clearly beside health while the lower dungeon view remains unobstructed |
-| 2026-11-24 | Physical supplies and deployment economy | `npm run check` | Passed; 79 tests, strict TypeScript, profile v3 migration, atomic purchases/deployment/loss/return, and production build |
+| 2026-11-24 | Physical supplies and deployment economy | `npm run check` | Passed; 81 tests, strict TypeScript, profile v3 migration, atomic purchases/deployment/loss/return, and production build |
 | 2026-11-24 | Fixed dungeon and combat quick slots | `npm run test:e2e` | Passed; 12 Chromium scenarios cover shop purchase, preparation, 60-round ammo, timed reload/heal, `1–4` selection, loot, Boss, and both extraction modes |
+| 2026-11-24 | Split extraction routes and fixed weapon slots | `npm run check` + `npm run test:e2e` | Passed; dual-weapon retention/replacement, bottom four-slot bar, Boss-alive drop-pack exit, and Boss-gated full extraction verified |
 
 ## Commits
 

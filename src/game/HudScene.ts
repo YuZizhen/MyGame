@@ -5,6 +5,7 @@ import {
   listContainerItems,
   moveStoredItemToPosition,
   rotatedSize,
+  weaponSlotFor,
   weaponDamagePerSecond,
   type ContainerState,
   type ItemInstance,
@@ -42,9 +43,9 @@ const DEFAULT_HUD: HudState = {
   reserveAmmo: 0,
   quickSlots: [
     { key: "1", label: "应急短刃", kind: "weapon", selected: true },
-    { key: "2", label: "空", kind: "weapon", selected: false },
+    { key: "2", label: "远程槽为空", kind: "weapon", selected: false },
     { key: "3", label: "空", kind: "medicine", selected: false },
-    { key: "4", label: "空", kind: "medicine", selected: false },
+    { key: "4", label: "特殊药剂 · 未开放", kind: "medicine", selected: false },
   ],
   rollReady: true,
   interactionPrompt: "",
@@ -74,19 +75,20 @@ interface ItemDetailAnchor {
 
 type ItemDetailSelection = (
   | { source: "chest"; itemId: string; chestId: string; confirmingDiscard?: false }
-  | { source: "weapon"; itemId: string; confirmingDiscard?: false }
+  | { source: "weapon" | "rangedWeapon"; itemId: string; confirmingDiscard?: false }
   | { source: StoredContainerSlot; itemId: string; confirmingDiscard: boolean }
 ) & { anchor: ItemDetailAnchor };
 
 export class HudScene extends Phaser.Scene {
   private hudState: HudState = { ...DEFAULT_HUD };
   private statusGraphics!: Phaser.GameObjects.Graphics;
+  private quickbarGraphics!: Phaser.GameObjects.Graphics;
   private minimapGraphics!: Phaser.GameObjects.Graphics;
   private objectiveText!: Phaser.GameObjects.Text;
   private statusText!: Phaser.GameObjects.Text;
   private corruptionText!: Phaser.GameObjects.Text;
   private profileText!: Phaser.GameObjects.Text;
-  private quickSlotsText!: Phaser.GameObjects.Text;
+  private quickSlotTexts: Phaser.GameObjects.Text[] = [];
   private bossNameText!: Phaser.GameObjects.Text;
   private bannerText!: Phaser.GameObjects.Text;
   private resultBackdrop!: Phaser.GameObjects.Rectangle;
@@ -123,6 +125,7 @@ export class HudScene extends Phaser.Scene {
     this.input.mouse?.disableContextMenu();
     this.input.dragDistanceThreshold = 9;
     this.statusGraphics = this.add.graphics();
+    this.quickbarGraphics = this.add.graphics().setDepth(20);
     this.minimapGraphics = this.add.graphics();
     this.lootGraphics = this.add.graphics().setDepth(100);
     this.extractionGraphics = this.add.graphics().setDepth(120);
@@ -162,14 +165,9 @@ export class HudScene extends Phaser.Scene {
       strokeThickness: 4,
     });
 
-    this.quickSlotsText = this.add.text(34, 178, "", {
-      fontFamily: "Consolas, Microsoft YaHei, monospace",
-      fontSize: "11px",
-      color: "#aeb8bb",
-      stroke: "#080b0f",
-      strokeThickness: 3,
-      lineSpacing: 5,
-    });
+    this.quickSlotTexts = Array.from({ length: 4 }, () => this.add.text(0, 0, "", {
+      fontFamily: "Microsoft YaHei, sans-serif", fontSize: "11px", color: "#cbd2d4", align: "center",
+    }).setOrigin(0.5).setDepth(21));
 
     this.bossNameText = this.add
       .text(640, 30, "遗迹守门人", {
@@ -481,13 +479,14 @@ export class HudScene extends Phaser.Scene {
   private handleExtractionState(state: ExtractionUiState): void {
     this.clearExtractionObjects();
     this.extractionGraphics.clear();
-    if (!state.open || !state.normal || !state.dropPack) return;
+    const preview = state.normal ?? state.dropPack;
+    if (!state.open || !preview) return;
 
     this.extractionGraphics.fillStyle(0x020405, 0.92).fillRect(0, 0, 1280, 720);
     this.extractionGraphics.fillStyle(0x0b1116, 1).fillRoundedRect(112, 72, 1056, 560, 22);
     this.extractionGraphics.lineStyle(2, 0x62d48c, 0.7).strokeRoundedRect(112, 72, 1056, 560, 22);
     const title = this.add
-      .text(640, 112, "选择撤离方式", {
+      .text(640, 112, preview.mode === "drop_pack" ? "丢包撤离点" : "守门人传送门", {
         fontFamily: "Microsoft YaHei, sans-serif",
         fontSize: "30px",
         fontStyle: "bold",
@@ -496,7 +495,7 @@ export class HudScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(123);
     const subtitle = this.add
-      .text(640, 151, "胸挂与背包并列；区别只发生在本次撤离结算", {
+      .text(640, 151, preview.mode === "drop_pack" ? "无需击败首领；撤离时必须放弃背包" : "击败首领后开放；可完整带出本次负载", {
         fontFamily: "Microsoft YaHei, sans-serif",
         fontSize: "16px",
         color: "#9facb0",
@@ -504,10 +503,9 @@ export class HudScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(123);
     this.extractionObjects.push(title, subtitle);
-    this.createExtractionCard(state.normal, 150, 190, 450, 340);
-    this.createExtractionCard(state.dropPack, 680, 190, 450, 340);
+    this.createExtractionCard(preview, 415, 190, 450, 340);
     const hint = this.add
-      .text(640, 582, "按 1 / 2 或点击方案确认撤离 · Esc 返回继续整理", {
+      .text(640, 582, "按 1 或点击卡片确认撤离 · Esc 返回继续探索", {
         fontFamily: "Microsoft YaHei, sans-serif",
         fontSize: "16px",
         color: "#aeb9bc",
@@ -538,7 +536,7 @@ export class HudScene extends Phaser.Scene {
       this.game.events.emit("extraction:choose", preview.mode);
     });
     const heading = this.add
-      .text(x + 28, y + 28, dropPack ? "[2] 丢包撤离" : "[1] 完整撤离", {
+      .text(x + 28, y + 28, dropPack ? "[1] 丢包撤离" : "[1] 完整撤离", {
         fontFamily: "Microsoft YaHei, sans-serif",
         fontSize: "27px",
         fontStyle: "bold",
@@ -732,8 +730,8 @@ export class HudScene extends Phaser.Scene {
       item = revealed.has(selection.itemId)
         ? state.chestItems.find((candidate) => candidate.id === selection.itemId)
         : undefined;
-    } else if (selection.source === "weapon") {
-      item = loadout.weapon?.id === selection.itemId ? loadout.weapon : undefined;
+    } else if (selection.source === "weapon" || selection.source === "rangedWeapon") {
+      item = loadout[selection.source]?.id === selection.itemId ? loadout[selection.source] : undefined;
     } else {
       const container = loadout[selection.source];
       item = container
@@ -814,7 +812,8 @@ export class HudScene extends Phaser.Scene {
     }).setDepth(152);
     const detailObjects: Phaser.GameObjects.GameObject[] = [];
     if (item.weaponStats) {
-      detailObjects.push(...this.drawWeaponComparison(panelX, panelY, item, loadout.weapon));
+      const currentWeapon = weaponSlotFor(item) === "ranged" ? loadout.rangedWeapon : loadout.weapon;
+      detailObjects.push(...this.drawWeaponComparison(panelX, panelY, item, currentWeapon));
     } else {
       detailObjects.push(this.add.text(panelX + 20, panelY + 230, this.detailValueText(item), {
         fontFamily: "Microsoft YaHei, sans-serif",
@@ -842,7 +841,7 @@ export class HudScene extends Phaser.Scene {
         this.game.events.emit("loot:take", { chestId: selection.chestId, itemId: selection.itemId });
       });
     } else {
-      const primaryLabel = selection.source === "weapon"
+      const primaryLabel = selection.source === "weapon" || selection.source === "rangedWeapon"
         ? "卸下到背包"
         : item.tags.includes("weapon")
           ? "装备武器"
@@ -852,21 +851,22 @@ export class HudScene extends Phaser.Scene {
         this.registry.set("itemDetailOpen", false);
         this.game.events.emit("loadout:item-action", { source: selection.source, itemId: selection.itemId });
       });
-      if (selection.source !== "weapon") {
-        const discardLabel = selection.confirmingDiscard
+      if (selection.source !== "weapon" && selection.source !== "rangedWeapon") {
+        const storedSelection = selection as ItemDetailSelection & { source: StoredContainerSlot; confirmingDiscard: boolean };
+        const discardLabel = storedSelection.confirmingDiscard
           ? state.chestId ? "确认退回宝箱" : "确认永久丢弃"
           : state.chestId ? "退回当前宝箱" : "丢弃物品";
         this.createDetailButton(panelX + 118, buttonY, panelWidth - 132, discardLabel, "danger", () => {
-          if (!selection.confirmingDiscard) {
-            this.itemDetailSelection = { ...selection, confirmingDiscard: true };
+          if (!storedSelection.confirmingDiscard) {
+            this.itemDetailSelection = { ...storedSelection, confirmingDiscard: true };
             if (this.lootState) this.handleLootState(this.lootState);
             return;
           }
           this.itemDetailSelection = undefined;
           this.registry.set("itemDetailOpen", false);
           this.game.events.emit("loadout:item-discard", {
-            source: selection.source,
-            itemId: selection.itemId,
+            source: storedSelection.source,
+            itemId: storedSelection.itemId,
             confirmed: true,
           });
         });
@@ -1126,58 +1126,39 @@ export class HudScene extends Phaser.Scene {
   private drawLoadout(loadout: NonNullable<LootUiState["loadout"]>, dragEnabled: boolean): void {
     this.lootGraphics.fillStyle(0x0b1115, 1).fillRoundedRect(474, 184, 672, 66, 10);
     this.lootGraphics.lineStyle(1, 0x344148, 0.9).strokeRoundedRect(474, 184, 672, 66, 10);
-    const weaponLabel = this.add
-      .text(494, 196, "武器位", {
-        fontFamily: "Microsoft YaHei, sans-serif",
-        fontSize: "14px",
-        color: "#9facb0",
-      })
-      .setDepth(103);
-    const weaponName = this.add
-      .text(574, 194, loadout.weapon?.name ?? "未装备", {
-        fontFamily: "Microsoft YaHei, sans-serif",
-        fontSize: "18px",
-        fontStyle: "bold",
-        color: "#e7ecec",
-      })
-      .setDepth(103);
-    const weaponStats = loadout.weapon?.weaponStats;
-    const weaponStatsText = this.add
-      .text(
-        574,
-        221,
-        weaponStats
-          ? `伤害 ${weaponStats.damage} · 攻击 ${((1000 / weaponStats.attackIntervalMs)).toFixed(2)}/秒 · 暴击 ${Math.round(weaponStats.critChance * 100)}% · DPS ${weaponDamagePerSecond(loadout.weapon!)?.toFixed(1)}`
-          : "当前武器没有战斗属性",
-        {
-          fontFamily: "Microsoft YaHei, sans-serif",
-          fontSize: "13px",
-          color: "#96a3a7",
-        },
-      )
-      .setDepth(103);
-    const weaponButton = this.add
-      .rectangle(474, 184, 672, 66, 0xffffff, 0.001)
-      .setOrigin(0)
-      .setDepth(104)
-      .setInteractive({ useHandCursor: true });
-    weaponButton.on(Phaser.Input.Events.POINTER_OVER, () => weaponButton.setStrokeStyle(2, 0x62d48c, 0.5));
-    weaponButton.on(Phaser.Input.Events.POINTER_OUT, () => weaponButton.setStrokeStyle());
-    weaponButton.on(Phaser.Input.Events.POINTER_DOWN, () => {
-      if (loadout.weapon) {
-        this.selectItem({
-          source: "weapon",
-          itemId: loadout.weapon.id,
-          anchor: { x: 474, y: 184, width: 672, height: 66 },
-        });
+    this.lootGraphics.lineStyle(1, 0x344148, 0.8).lineBetween(810, 190, 810, 244);
+    const drawWeaponSlot = (
+      item: ItemInstance | undefined,
+      source: "weapon" | "rangedWeapon",
+      x: number,
+      label: string,
+    ): void => {
+      const stats = item?.weaponStats;
+      const slotLabel = this.add.text(x + 14, 192, label, {
+        fontFamily: "Microsoft YaHei, sans-serif", fontSize: "12px", color: "#9facb0",
+      }).setDepth(103);
+      const name = this.add.text(x + 74, 191, item?.name ?? "未装备", {
+        fontFamily: "Microsoft YaHei, sans-serif", fontSize: "15px", fontStyle: "bold", color: "#e7ecec",
+      }).setDepth(103);
+      const detail = this.add.text(x + 74, 219, stats
+        ? `伤害 ${stats.damage} · DPS ${weaponDamagePerSecond(item!)?.toFixed(1)}${stats.kind === "ranged" ? ` · ${stats.loadedAmmo ?? 0}/${stats.magazineSize ?? 0}` : ""}`
+        : "当前槽位为空", {
+        fontFamily: "Microsoft YaHei, sans-serif", fontSize: "11px", color: "#96a3a7",
+      }).setDepth(103);
+      const button = this.add.rectangle(x, 184, 336, 66, 0xffffff, 0.001)
+        .setOrigin(0).setDepth(104).setInteractive({ useHandCursor: true });
+      button.on(Phaser.Input.Events.POINTER_DOWN, () => {
+        if (item) this.selectItem({ source, itemId: item.id, anchor: { x, y: 184, width: 336, height: 66 } });
+      });
+      this.lootObjects.push(slotLabel, name, detail, button);
+      if (item) {
+        const icon = this.add.graphics().setDepth(103);
+        this.drawLootIcon(icon, item, x + 55, 218, 0.42);
+        this.lootObjects.push(icon);
       }
-    });
-    this.lootObjects.push(weaponLabel, weaponName, weaponStatsText, weaponButton);
-    if (loadout.weapon) {
-      const weaponIcon = this.add.graphics().setDepth(103);
-      this.drawLootIcon(weaponIcon, loadout.weapon, 548, 218, 0.5);
-      this.lootObjects.push(weaponIcon);
-    }
+    };
+    drawWeaponSlot(loadout.weapon, "weapon", 474, "[1] 近战");
+    drawWeaponSlot(loadout.rangedWeapon, "rangedWeapon", 810, "[2] 远程");
 
     this.drawContainer(loadout, loadout.rig, 474, 282, 302, 280, "胸挂", dragEnabled);
     if (loadout.backpack) {
@@ -1520,8 +1501,8 @@ export class HudScene extends Phaser.Scene {
     const healthRatio = Phaser.Math.Clamp(state.hp / state.maxHp, 0, 1);
 
     this.statusGraphics.clear();
-    this.statusGraphics.fillStyle(0x080b0f, 0.82).fillRoundedRect(24, 22, 390, 214, 12);
-    this.statusGraphics.lineStyle(1, 0x465057, 0.8).strokeRoundedRect(24, 22, 390, 214, 12);
+    this.statusGraphics.fillStyle(0x080b0f, 0.82).fillRoundedRect(24, 22, 390, 160, 12);
+    this.statusGraphics.lineStyle(1, 0x465057, 0.8).strokeRoundedRect(24, 22, 390, 160, 12);
     this.statusGraphics.fillStyle(0x11171c, 1).fillRoundedRect(34, 72, 278, 18, 5);
     this.statusGraphics.fillStyle(healthRatio > 0.3 ? 0xc84f46 : 0xe38b36, 1);
     this.statusGraphics.fillRoundedRect(36, 74, 274 * healthRatio, 14, 4);
@@ -1543,13 +1524,23 @@ export class HudScene extends Phaser.Scene {
       .setColor(
         state.weaponKind === "ranged" && state.loadedAmmo === 0 ? "#d88479" : "#9facb0",
       );
-    const slotLabel = (slot: HudState["quickSlots"][number]): string => {
-      const name = slot.label.length > 7 ? `${slot.label.slice(0, 6)}…` : slot.label;
-      return `${slot.selected ? "▶" : " "}[${slot.key}] ${name}${slot.quantity !== undefined ? ` ×${slot.quantity}` : ""}`;
-    };
-    this.quickSlotsText.setText(
-      `${slotLabel(state.quickSlots[0])}    ${slotLabel(state.quickSlots[1])}\n${slotLabel(state.quickSlots[2])}    ${slotLabel(state.quickSlots[3])}`,
-    );
+    const barX = 346;
+    const barY = 654;
+    const slotWidth = 143;
+    const slotHeight = 54;
+    this.quickbarGraphics.clear();
+    this.quickbarGraphics.fillStyle(0x05080b, 0.78).fillRoundedRect(barX - 8, barY - 5, slotWidth * 4 + 22, slotHeight + 10, 9);
+    state.quickSlots.forEach((slot, index) => {
+      const x = barX + index * (slotWidth + 4);
+      const accent = index === 0 ? 0xc7985b : index === 1 ? 0x6da7cf : index === 2 ? 0x69b985 : 0x8d6cab;
+      this.quickbarGraphics.fillStyle(slot.selected ? 0x1a242b : 0x0d1418, 0.96).fillRoundedRect(x, barY, slotWidth, slotHeight, 5);
+      this.quickbarGraphics.lineStyle(slot.selected ? 2 : 1, accent, slot.selected ? 1 : 0.55).strokeRoundedRect(x, barY, slotWidth, slotHeight, 5);
+      const name = slot.label.length > 10 ? `${slot.label.slice(0, 9)}…` : slot.label;
+      this.quickSlotTexts[index]
+        .setPosition(x + slotWidth / 2, barY + slotHeight / 2)
+        .setText(`[${slot.key}] ${name}${slot.quantity !== undefined ? `\n数量 ${slot.quantity}` : ""}`)
+        .setColor(slot.selected ? "#fff0d2" : "#b7c0c2");
+    });
     this.interactionText.setText(state.interactionPrompt).setVisible(state.interactionPrompt.length > 0);
 
     if (state.bossActive) {
@@ -1610,6 +1601,13 @@ export class HudScene extends Phaser.Scene {
         mapState.bossActive ? 4 : 3,
       );
     }
+
+    this.minimapGraphics.lineStyle(2, 0xe3a154, 1);
+    this.minimapGraphics.strokeCircle(
+      mapX + (mapState.dropPackExitTileX + 0.5) * scale,
+      mapY + (mapState.dropPackExitTileY + 0.5) * scale,
+      4.5,
+    );
 
     if (mapState.exitTileX !== undefined && mapState.exitTileY !== undefined) {
       this.minimapGraphics.lineStyle(2, 0x62d48c, 1);

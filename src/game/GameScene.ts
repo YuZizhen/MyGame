@@ -19,6 +19,7 @@ import {
   rotateStoredItem,
   settleExtraction,
   unequipWeaponToBackpack,
+  weaponSlotFor,
   type ExtractionMode,
   type ExtractionResult,
   type ItemInstance,
@@ -158,7 +159,6 @@ export class GameScene extends Phaser.Scene {
   private reloadAction?: ReloadAction;
   private medicalAction?: MedicalAction;
   private selectedWeaponSlot: 1 | 2 = 1;
-  private emergencyMeleeSelected = false;
   private selectedMedicineId?: string;
   private facing = 0;
   private attackReadyAt = 0;
@@ -180,8 +180,11 @@ export class GameScene extends Phaser.Scene {
   private bossChargingUntil = 0;
   private bossChargeTarget = new Phaser.Math.Vector2();
   private bossChargeHit = false;
-  private exitPortal?: Phaser.GameObjects.Arc;
-  private exitRing?: Phaser.GameObjects.Arc;
+  private fullExitPortal?: Phaser.GameObjects.Arc;
+  private fullExitRing?: Phaser.GameObjects.Arc;
+  private dropPackExitPortal?: Phaser.GameObjects.Arc;
+  private dropPackExitRing?: Phaser.GameObjects.Arc;
+  private availableExtractionMode?: ExtractionMode;
   private searchGraphics!: Phaser.GameObjects.Graphics;
   private searchChest?: ChestState;
   private searchStartedAt = 0;
@@ -229,6 +232,7 @@ export class GameScene extends Phaser.Scene {
     this.drawDungeon();
     this.createWalls();
     this.createPlayer();
+    this.createDropPackExitPortal();
     this.createChests();
     this.createEnemies();
     this.createFog();
@@ -256,6 +260,8 @@ export class GameScene extends Phaser.Scene {
       bossTileY: this.dungeon.bossRoom.centerY,
       bossDiscovered: false,
       bossActive: false,
+      dropPackExitTileX: this.dungeon.dropPackExitRoom.centerX,
+      dropPackExitTileY: this.dungeon.dropPackExitRoom.centerY,
       chests: this.chests.map((chest) => ({
         id: chest.id,
         tileX: Math.floor(chest.container.x / TILE_SIZE),
@@ -267,19 +273,18 @@ export class GameScene extends Phaser.Scene {
     };
     this.registry.set("mapState", this.mapState);
 
-    if (
-      qaMode === "boss" ||
-      qaMode === "exit" ||
-      qaMode === "extract" ||
-      qaMode === "extract-normal" ||
-      qaMode === "extract-drop"
+    if (qaMode === "extract-drop") {
+      this.player.setPosition(this.dropPackExitPortal!.x, this.dropPackExitPortal!.y + 80);
+      this.cameras.main.centerOn(this.player.x, this.player.y);
+    } else if (
+      qaMode === "boss" || qaMode === "exit" || qaMode === "extract" || qaMode === "extract-normal"
     ) {
       this.player.setPosition(
         (this.dungeon.bossRoom.centerX + 0.5) * TILE_SIZE,
         (this.dungeon.bossRoom.centerY + 0.5) * TILE_SIZE + 260,
       );
       this.cameras.main.centerOn(this.player.x, this.player.y);
-      if (qaMode === "exit" || qaMode?.startsWith("extract")) {
+      if (qaMode === "exit" || qaMode === "extract" || qaMode === "extract-normal") {
         this.damageMob(this.boss, this.boss.maxHp);
       }
     }
@@ -371,7 +376,7 @@ export class GameScene extends Phaser.Scene {
 
     if (this.qaOpenExtraction && this.scene.isActive("HudScene")) {
       this.qaOpenExtraction = false;
-      this.openExtractionPanel();
+      this.openExtractionPanel(this.qaExtractionMode ?? "normal");
       if (this.qaExtractionMode) {
         const mode = this.qaExtractionMode;
         this.qaExtractionMode = undefined;
@@ -473,7 +478,6 @@ export class GameScene extends Phaser.Scene {
     this.reloadAction = undefined;
     this.medicalAction = undefined;
     this.selectedWeaponSlot = 1;
-    this.emergencyMeleeSelected = false;
     this.selectedMedicineId = undefined;
     this.facing = 0;
     this.attackReadyAt = 0;
@@ -493,8 +497,11 @@ export class GameScene extends Phaser.Scene {
     this.bossBusyUntil = 0;
     this.bossChargingUntil = 0;
     this.bossChargeHit = false;
-    this.exitPortal = undefined;
-    this.exitRing = undefined;
+    this.fullExitPortal = undefined;
+    this.fullExitRing = undefined;
+    this.dropPackExitPortal = undefined;
+    this.dropPackExitRing = undefined;
+    this.availableExtractionMode = undefined;
     this.searchChest = undefined;
     this.searchStartedAt = 0;
     this.searchRequiresRelease = false;
@@ -526,7 +533,8 @@ export class GameScene extends Phaser.Scene {
     if (loaded.profile.activeRun?.id !== this.runId) return;
     for (const item of loaded.profile.activeRun.deployedItems) {
       if (item.tags.includes("weapon")) {
-        this.loadout = { ...this.loadout, weapon: { ...item, tags: [...item.tags], weaponStats: item.weaponStats ? { ...item.weaponStats } : undefined } };
+        const property = weaponSlotFor(item) === "ranged" ? "rangedWeapon" : "weapon";
+        this.loadout = { ...this.loadout, [property]: { ...item, tags: [...item.tags], weaponStats: item.weaponStats ? { ...item.weaponStats } : undefined } };
         continue;
       }
       const rigPlacement = autoPlaceItem(this.loadout.rig, item);
@@ -906,6 +914,23 @@ export class GameScene extends Phaser.Scene {
     this.playerShadow = this.add.ellipse(startX, startY + 20, 54, 24, 0x050709, 0.55).setDepth(5);
     this.player = this.physics.add.sprite(startX, startY, "player").setDepth(6);
     this.player.setCircle(18, 23, 18).setCollideWorldBounds(true);
+  }
+
+  private createDropPackExitPortal(): void {
+    const exitX = (this.dungeon.dropPackExitRoom.centerX + 0.5) * TILE_SIZE;
+    const exitY = (this.dungeon.dropPackExitRoom.centerY + 0.5) * TILE_SIZE;
+    this.dropPackExitPortal = this.add.circle(exitX, exitY, 54, 0xc87532, 0.24).setDepth(exitY - 2);
+    this.dropPackExitRing = this.add.circle(exitX, exitY, 72, 0xc87532, 0.04)
+      .setStrokeStyle(6, 0xe3a154, 0.9).setDepth(exitY - 3);
+    this.tweens.add({
+      targets: this.dropPackExitRing,
+      scale: 1.16,
+      alpha: 0.3,
+      yoyo: true,
+      repeat: -1,
+      duration: 1100,
+      ease: "Sine.easeInOut",
+    });
   }
 
   private createEnemies(): void {
@@ -1417,7 +1442,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private handleLoadoutItemAction(payload: {
-    source: StoredContainerSlot | "weapon";
+    source: StoredContainerSlot | "weapon" | "rangedWeapon";
     itemId: string;
   }): void {
     if (!this.lootPanelOpen) return;
@@ -1425,10 +1450,12 @@ export class GameScene extends Phaser.Scene {
     let result: ReturnType<typeof unequipWeaponToBackpack>;
     let successMessage: string;
 
-    if (payload.source === "weapon") {
-      result = this.loadout.weapon?.value === 0
-        ? { ok: true, value: { ...this.loadout, weapon: undefined } }
-        : unequipWeaponToBackpack(this.loadout);
+    if (payload.source === "weapon" || payload.source === "rangedWeapon") {
+      const slot = payload.source === "rangedWeapon" ? "ranged" : "melee";
+      const equipped = this.loadout[payload.source];
+      result = equipped?.value === 0
+        ? { ok: true, value: { ...this.loadout, [payload.source]: undefined } }
+        : unequipWeaponToBackpack(this.loadout, slot);
       successMessage = "武器已放入背包";
     } else {
       const sourceContainer = this.loadout[payload.source];
@@ -1437,7 +1464,9 @@ export class GameScene extends Phaser.Scene {
         : undefined;
       if (!item) return;
       if (item.tags.includes("weapon")) {
-        const equippableLoadout = this.loadout.weapon?.value === 0 ? { ...this.loadout, weapon: undefined } : this.loadout;
+        const equippableLoadout = weaponSlotFor(item) === "melee" && this.loadout.weapon?.value === 0
+          ? { ...this.loadout, weapon: undefined }
+          : this.loadout;
         result = equipWeaponFromContainer(equippableLoadout, item.id, payload.source);
         successMessage = `已装备 ${item.name}`;
       } else {
@@ -1703,8 +1732,9 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     if (this.extractionPanelOpen) {
-      if (event.code === "Digit1" || event.code === "Numpad1") this.handleExtractionChoice("normal");
-      else if (event.code === "Digit2" || event.code === "Numpad2") this.handleExtractionChoice("drop_pack");
+      if (event.code === "Digit1" || event.code === "Numpad1") {
+        if (this.availableExtractionMode) this.handleExtractionChoice(this.availableExtractionMode);
+      }
       else if (event.code === "Escape") this.closeExtractionPanel();
       return;
     }
@@ -1712,8 +1742,8 @@ export class GameScene extends Phaser.Scene {
       if (event.code === "Escape") this.setPauseMenuOpen(true);
       else if (event.code === "Digit1" || event.code === "Numpad1") this.selectWeaponSlot(1);
       else if (event.code === "Digit2" || event.code === "Numpad2") this.selectWeaponSlot(2);
-      else if (event.code === "Digit3" || event.code === "Numpad3") this.selectMedicineSlot(0);
-      else if (event.code === "Digit4" || event.code === "Numpad4") this.selectMedicineSlot(1);
+      else if (event.code === "Digit3" || event.code === "Numpad3") this.selectMedicineSlot();
+      else if (event.code === "Digit4" || event.code === "Numpad4") this.game.events.emit("hud:banner", "特殊药剂槽尚未开放");
       return;
     }
     if (event.code === "Escape" || event.code === "KeyE") {
@@ -1730,50 +1760,23 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private storedWeapon(): { item: ItemInstance; source: StoredContainerSlot } | undefined {
-    for (const source of ["rig", "backpack"] as const) {
-      const container = this.loadout[source];
-      const item = container && listContainerItems(container).find((candidate) => candidate.tags.includes("weapon"));
-      if (item) return { item, source };
-    }
-    return undefined;
-  }
-
   private selectWeaponSlot(slot: 1 | 2): void {
     if (slot === this.selectedWeaponSlot) return;
+    const weapon = slot === 1 ? this.loadout.weapon : this.loadout.rangedWeapon;
+    if (!weapon) {
+      this.game.events.emit("hud:banner", slot === 1 ? "近战武器槽为空" : "远程武器槽为空");
+      return;
+    }
     this.cancelCombatAction("切换武器，动作已取消");
-    const stored = this.storedWeapon();
-    if (!stored) {
-      if (slot === 2) {
-        this.selectedWeaponSlot = 2;
-        this.emergencyMeleeSelected = true;
-        this.game.events.emit("hud:banner", "已切换至应急短刃");
-      } else {
-        this.selectedWeaponSlot = 1;
-        this.emergencyMeleeSelected = false;
-        this.game.events.emit("hud:banner", `已切换至 ${this.loadout.weapon?.name ?? "应急短刃"}`);
-      }
-      this.emitHudState();
-      return;
-    }
-    const equippable = this.loadout.weapon?.value === 0 ? { ...this.loadout, weapon: undefined } : this.loadout;
-    const result = equipWeaponFromContainer(equippable, stored.item.id, stored.source);
-    if (!result.ok) {
-      this.game.events.emit("hud:banner", "空间不足，无法切换武器");
-      return;
-    }
-    this.loadout = result.value;
     this.selectedWeaponSlot = slot;
-    this.emergencyMeleeSelected = false;
-    this.game.events.emit("audio:event", "inventory.item.place");
-    this.game.events.emit("hud:banner", `已切换至 ${this.loadout.weapon?.name ?? "应急短刃"}`);
+    this.game.events.emit("hud:banner", `已切换至 ${weapon.name}`);
     this.emitHudState();
   }
 
-  private selectMedicineSlot(index: 0 | 1): void {
-    const selection = listMedicineSelections(this.loadout)[index];
+  private selectMedicineSlot(): void {
+    const selection = findQuickMedicine(this.loadout, this.selectedMedicineId);
     if (!selection) {
-      this.game.events.emit("hud:banner", `${index + 3} 号快捷栏没有医疗物资`);
+      this.game.events.emit("hud:banner", "3 号快捷栏没有医疗物资");
       return;
     }
     this.selectedMedicineId = selection.item.id;
@@ -1828,7 +1831,7 @@ export class GameScene extends Phaser.Scene {
 
     if (Phaser.Input.Keyboard.JustDown(this.controls.usePotion)) this.startMedicalUse(time);
     if (Phaser.Input.Keyboard.JustDown(this.controls.restart)) this.startReload(time);
-    if (Phaser.Input.Keyboard.JustDown(this.controls.emergencyMelee)) this.performMeleeAttack(time, STARTER_WEAPON_STATS);
+    if (Phaser.Input.Keyboard.JustDown(this.controls.emergencyMelee)) this.performMeleeAttack(time, this.loadout.weapon?.weaponStats ?? STARTER_WEAPON_STATS);
 
     if (time < this.controlLockedUntil) {
       this.player.setVelocity(0, 0);
@@ -1891,7 +1894,7 @@ export class GameScene extends Phaser.Scene {
   private performAttack(time: number): void {
     if (this.runState !== "playing" || this.pauseMenuOpen || time < this.attackReadyAt || time < this.controlLockedUntil) return;
     const weaponStats = this.currentWeaponStats();
-    if (!this.emergencyMeleeSelected && isRangedWeapon(this.loadout.weapon)) {
+    if (this.selectedWeaponSlot === 2) {
       this.performRangedAttack(time);
       return;
     }
@@ -1942,7 +1945,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private performRangedAttack(time: number): void {
-    const weapon = this.loadout.weapon;
+    const weapon = this.loadout.rangedWeapon;
     const stats = weapon?.weaponStats;
     if (!weapon || !stats || stats.kind !== "ranged" || !stats.ammoType) return;
     const loadedAmmo = stats.loadedAmmo ?? 0;
@@ -1950,13 +1953,12 @@ export class GameScene extends Phaser.Scene {
       if (loadoutAmmoCount(this.loadout, stats.ammoType) > 0) this.startReload(time);
       else {
         this.game.events.emit("audio:event", "weapon.empty");
-        this.game.events.emit("hud:banner", "弹药耗尽 · 已使用应急短刃");
-        this.performMeleeAttack(time, STARTER_WEAPON_STATS);
+        this.game.events.emit("hud:banner", "弹药耗尽 · 按 1 切换近战武器");
       }
       return;
     }
     this.attackReadyAt = time + stats.attackIntervalMs;
-    this.loadout = { ...this.loadout, weapon: { ...weapon, weaponStats: { ...stats, loadedAmmo: loadedAmmo - 1 } } };
+    this.loadout = { ...this.loadout, rangedWeapon: { ...weapon, weaponStats: { ...stats, loadedAmmo: loadedAmmo - 1 } } };
     const range = stats.range ?? 720;
     const target = this.mobs
       .filter((mob) => !mob.dead && mob.sprite.active && (!mob.isBoss || this.bossEncounterActive))
@@ -1994,8 +1996,8 @@ export class GameScene extends Phaser.Scene {
 
   private startReload(time: number): void {
     if (this.reloadAction || this.medicalAction || time < this.rollingUntil) return;
-    if (this.emergencyMeleeSelected) return;
-    const weapon = this.loadout.weapon;
+    if (this.selectedWeaponSlot !== 2) return;
+    const weapon = this.loadout.rangedWeapon;
     const stats = weapon?.weaponStats;
     if (!weapon || stats?.kind !== "ranged" || !stats.ammoType || !stats.magazineSize || !stats.reloadMs) return;
     if ((stats.loadedAmmo ?? 0) >= stats.magazineSize || loadoutAmmoCount(this.loadout, stats.ammoType) <= 0) return;
@@ -2008,14 +2010,14 @@ export class GameScene extends Phaser.Scene {
 
   private updateCombatAction(time: number): void {
     if (this.reloadAction && time >= this.reloadAction.completesAt) {
-      const weapon = this.loadout.weapon;
+      const weapon = this.loadout.rangedWeapon;
       const stats = weapon?.weaponStats;
       if (weapon?.id === this.reloadAction.weaponId && stats?.kind === "ranged" && stats.ammoType && stats.magazineSize) {
         const needed = stats.magazineSize - (stats.loadedAmmo ?? 0);
         const result = consumeAmmo(this.loadout, stats.ammoType, needed);
         this.loadout = {
           ...result.loadout,
-          weapon: { ...weapon, weaponStats: { ...stats, loadedAmmo: (stats.loadedAmmo ?? 0) + result.consumed } },
+          rangedWeapon: { ...weapon, weaponStats: { ...stats, loadedAmmo: (stats.loadedAmmo ?? 0) + result.consumed } },
         };
         this.game.events.emit("audio:event", "weapon.reload.complete");
       }
@@ -2049,7 +2051,9 @@ export class GameScene extends Phaser.Scene {
   }
 
   private currentWeaponStats(): WeaponStats {
-    return this.emergencyMeleeSelected ? STARTER_WEAPON_STATS : this.loadout.weapon?.weaponStats ?? STARTER_WEAPON_STATS;
+    return this.selectedWeaponSlot === 2
+      ? this.loadout.rangedWeapon?.weaponStats ?? STARTER_WEAPON_STATS
+      : this.loadout.weapon?.weaponStats ?? STARTER_WEAPON_STATS;
   }
 
   private damageMob(mob: MobState, amount: number, critical = false): void {
@@ -2435,10 +2439,10 @@ export class GameScene extends Phaser.Scene {
 
     const exitX = (this.dungeon.bossRoom.centerX + 0.5) * TILE_SIZE;
     const exitY = (this.dungeon.bossRoom.centerY + 0.5) * TILE_SIZE;
-    this.exitPortal = this.add.circle(exitX, exitY, 58, 0x36b7a2, 0.28).setDepth(exitY - 2);
-    this.exitRing = this.add.circle(exitX, exitY, 76, 0x36b7a2, 0.05).setStrokeStyle(6, 0x62d48c, 0.9).setDepth(exitY - 3);
+    this.fullExitPortal = this.add.circle(exitX, exitY, 58, 0x36b7a2, 0.28).setDepth(exitY - 2);
+    this.fullExitRing = this.add.circle(exitX, exitY, 76, 0x36b7a2, 0.05).setStrokeStyle(6, 0x62d48c, 0.9).setDepth(exitY - 3);
     this.tweens.add({
-      targets: this.exitRing,
+      targets: this.fullExitRing,
       scale: 1.18,
       alpha: 0.32,
       yoyo: true,
@@ -2476,16 +2480,27 @@ export class GameScene extends Phaser.Scene {
   }
 
   private tryExit(): boolean {
-    if (!this.exitPortal || !this.exitPortal.active) return false;
-    const distance = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.exitPortal.x, this.exitPortal.y);
-    if (distance > 110) return false;
-    this.openExtractionPanel();
-    return true;
+    if (this.dropPackExitPortal?.active) {
+      const dropDistance = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.dropPackExitPortal.x, this.dropPackExitPortal.y);
+      if (dropDistance <= 110) {
+        this.openExtractionPanel("drop_pack");
+        return true;
+      }
+    }
+    if (this.fullExitPortal?.active) {
+      const fullDistance = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.fullExitPortal.x, this.fullExitPortal.y);
+      if (fullDistance <= 110) {
+        this.openExtractionPanel("normal");
+        return true;
+      }
+    }
+    return false;
   }
 
   private previewExtraction(extraction: ExtractionResult): ExtractionPreview {
     const retainedItems = [
       ...(extraction.retained.weapon ? [extraction.retained.weapon] : []),
+      ...(extraction.retained.rangedWeapon ? [extraction.retained.rangedWeapon] : []),
       ...listContainerItems(extraction.retained.rig),
       ...(extraction.retained.backpack ? listContainerItems(extraction.retained.backpack) : []),
     ].filter((item) => item.value > 0);
@@ -2503,15 +2518,16 @@ export class GameScene extends Phaser.Scene {
     };
   }
 
-  private openExtractionPanel(): void {
+  private openExtractionPanel(mode: ExtractionMode): void {
     if (this.runState !== "playing" || this.extractionPanelOpen) return;
     this.cancelCombatAction("准备撤离，动作已取消");
     this.closeLootPanel();
     this.extractionPanelOpen = true;
+    this.availableExtractionMode = mode;
     const state: ExtractionUiState = {
       open: true,
-      normal: this.previewExtraction(settleExtraction(this.loadout, "normal")),
-      dropPack: this.previewExtraction(settleExtraction(this.loadout, "drop_pack")),
+      normal: mode === "normal" ? this.previewExtraction(settleExtraction(this.loadout, "normal")) : undefined,
+      dropPack: mode === "drop_pack" ? this.previewExtraction(settleExtraction(this.loadout, "drop_pack")) : undefined,
     };
     this.game.events.emit("extraction:state", state);
   }
@@ -2519,6 +2535,7 @@ export class GameScene extends Phaser.Scene {
   private closeExtractionPanel(): void {
     if (!this.extractionPanelOpen) return;
     this.extractionPanelOpen = false;
+    this.availableExtractionMode = undefined;
     this.game.events.emit("extraction:state", { open: false } satisfies ExtractionUiState);
   }
 
@@ -2536,7 +2553,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private handleExtractionChoice(mode: ExtractionMode): void {
-    if (!this.extractionPanelOpen || (mode !== "normal" && mode !== "drop_pack")) return;
+    if (!this.extractionPanelOpen || mode !== this.availableExtractionMode) return;
     const extraction = settleExtraction(this.loadout, mode);
     const preview = this.previewExtraction(extraction);
     let persisted = false;
@@ -2687,21 +2704,19 @@ export class GameScene extends Phaser.Scene {
   private emitHudState(): void {
     if (!this.boss) return;
     const weaponStats = this.currentWeaponStats();
-    const ranged = !this.emergencyMeleeSelected && isRangedWeapon(this.loadout.weapon);
-    const activeWeaponName = this.emergencyMeleeSelected ? "应急短刃" : this.loadout.weapon?.name ?? "应急短刃";
-    const storedWeapon = this.storedWeapon()?.item;
-    const medicineSlots = listMedicineSelections(this.loadout).slice(0, 2);
+    const activeWeapon = this.selectedWeaponSlot === 2 ? this.loadout.rangedWeapon : this.loadout.weapon;
+    const ranged = this.selectedWeaponSlot === 2 && isRangedWeapon(activeWeapon);
+    const activeWeaponName = activeWeapon?.name ?? (this.selectedWeaponSlot === 1 ? "应急短刃" : "远程槽为空");
+    const medicineSlots = listMedicineSelections(this.loadout);
     const selectedMedicine = findQuickMedicine(this.loadout, this.selectedMedicineId);
-    const firstWeaponLabel = this.selectedWeaponSlot === 1
-      ? activeWeaponName
-      : storedWeapon?.name ?? this.loadout.weapon?.name ?? "主武器";
-    const secondWeaponLabel = this.selectedWeaponSlot === 2
-      ? activeWeaponName
-      : storedWeapon?.name ?? "应急短刃";
+    const nearDropExit = Boolean(this.dropPackExitPortal?.active)
+      && Phaser.Math.Distance.Between(this.player.x, this.player.y, this.dropPackExitPortal!.x, this.dropPackExitPortal!.y) <= 125;
+    const nearFullExit = Boolean(this.fullExitPortal?.active)
+      && Phaser.Math.Distance.Between(this.player.x, this.player.y, this.fullExitPortal!.x, this.fullExitPortal!.y) <= 125;
     const timedAction = this.reloadAction
       ? {
           kind: "reload" as const,
-          label: `正在换弹 · ${this.loadout.weapon?.name ?? "主武器"}`,
+          label: `正在换弹 · ${this.loadout.rangedWeapon?.name ?? "远程武器"}`,
           progress: Phaser.Math.Clamp((this.time.now - this.reloadAction.startedAt) / (this.reloadAction.completesAt - this.reloadAction.startedAt), 0, 1),
         }
       : this.medicalAction
@@ -2728,10 +2743,10 @@ export class GameScene extends Phaser.Scene {
       magazineSize: ranged ? weaponStats.magazineSize ?? 0 : 0,
       reserveAmmo: ranged && weaponStats.ammoType ? loadoutAmmoCount(this.loadout, weaponStats.ammoType) : 0,
       quickSlots: [
-        { key: "1", label: firstWeaponLabel, kind: "weapon", selected: this.selectedWeaponSlot === 1 },
-        { key: "2", label: secondWeaponLabel, kind: "weapon", selected: this.selectedWeaponSlot === 2 },
+        { key: "1", label: this.loadout.weapon?.name ?? "近战槽为空", kind: "weapon", selected: this.selectedWeaponSlot === 1 },
+        { key: "2", label: this.loadout.rangedWeapon?.name ?? "远程槽为空", kind: "weapon", selected: this.selectedWeaponSlot === 2 },
         { key: "3", label: medicineSlots[0]?.item.name ?? "空", kind: "medicine", selected: selectedMedicine?.item.id === medicineSlots[0]?.item.id, quantity: medicineSlots[0] ? medicineSlots[0].item.quantity ?? 1 : undefined },
-        { key: "4", label: medicineSlots[1]?.item.name ?? "空", kind: "medicine", selected: selectedMedicine?.item.id === medicineSlots[1]?.item.id, quantity: medicineSlots[1] ? medicineSlots[1].item.quantity ?? 1 : undefined },
+        { key: "4", label: "特殊药剂 · 未开放", kind: "medicine", selected: false },
       ],
       timedAction,
       rollReady: this.time.now >= this.rollReadyAt,
@@ -2745,6 +2760,10 @@ export class GameScene extends Phaser.Scene {
             ? this.nearbyChest.opened
               ? "按 E 查看宝箱"
               : "按住 E 搜索宝箱"
+            : nearDropExit
+              ? "按 E 使用丢包撤离点 · 背包将被放弃"
+              : nearFullExit
+                ? "按 E 使用守门人传送门 · 完整撤离"
             : "",
       inventoryUsed: this.loadout.backpack ? containerUsedCells(this.loadout.backpack) : 0,
       inventoryCapacity: this.loadout.backpack ? containerCapacity(this.loadout.backpack) : 0,

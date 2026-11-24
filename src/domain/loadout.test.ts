@@ -149,6 +149,23 @@ describe("weapon slot", () => {
     if (accepted.ok) expect(accepted.value.weapon?.id).toBe("sword");
   });
 
+  it("keeps melee and ranged weapons in independent fixed slots", () => {
+    const loadout: LoadoutState = {
+      rig: createEmptyContainer(ASSAULT_RIG, "rig"),
+      backpack: createEmptyContainer(EXPEDITION_BACKPACK, "bag"),
+    };
+    const melee = equipWeapon(loadout, item({ id: "sword", tags: ["weapon"] }));
+    if (!melee.ok) throw new Error(melee.error);
+    const rangedItem = item({ id: "pistol", tags: ["weapon"], weaponStats: { kind: "ranged", damage: 20, attackIntervalMs: 320, critChance: 0, magazineSize: 12, loadedAmmo: 0, reloadMs: 1200, ammoType: "light" } });
+    const ranged = equipWeapon(melee.value, rangedItem);
+
+    expect(ranged.ok).toBe(true);
+    if (ranged.ok) {
+      expect(ranged.value.weapon?.id).toBe("sword");
+      expect(ranged.value.rangedWeapon?.id).toBe("pistol");
+    }
+  });
+
   it("atomically swaps a stored weapon with the equipped weapon", () => {
     const backpack = expectPlaced(
       placeItem(
@@ -457,6 +474,21 @@ describe("extraction settlement", () => {
     expect(result.corruptionBefore).toBe(32);
     expect(result.corruptionAfter).toBe(2);
     expect(source.backpack?.id).toBe("bag-1");
+  });
+
+  it("retains both fixed weapon slots during drop-pack extraction", () => {
+    const source = populatedLoadout();
+    source.rangedWeapon = item({
+      id: "pistol",
+      tags: ["weapon"],
+      weaponStats: { kind: "ranged", damage: 20, attackIntervalMs: 320, critChance: 0, magazineSize: 12, loadedAmmo: 4, reloadMs: 1200, ammoType: "light" },
+    });
+
+    const result = settleExtraction(source, "drop_pack");
+
+    expect(result.retained.weapon?.id).toBe("sword");
+    expect(result.retained.rangedWeapon?.id).toBe("pistol");
+    expect(result.retainedItemIds).toContain("pistol");
   });
 
   it("returns a detached snapshot that cannot change with the source loadout", () => {

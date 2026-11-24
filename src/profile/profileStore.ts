@@ -5,6 +5,7 @@ import {
   createEmptyContainer,
   itemCurrentValue,
   listContainerItems,
+  weaponSlotFor,
   type ExtractionResult,
   type ItemInstance,
 } from "../domain/loadout";
@@ -356,6 +357,7 @@ export function applyExtraction(
   if (profile.processedExtractionIds.includes(recordId)) return profile;
   const retainedItems = [
     ...(extraction.retained.weapon ? [extraction.retained.weapon] : []),
+    ...(extraction.retained.rangedWeapon ? [extraction.retained.rangedWeapon] : []),
     ...listContainerItems(extraction.retained.rig),
     ...(extraction.retained.backpack ? listContainerItems(extraction.retained.backpack) : []),
   ];
@@ -473,7 +475,9 @@ export function commitPreparedToggle(storage: StorageAdapter, itemId: string): P
   const selected = loaded.profile.preparedItemIds.includes(itemId);
   if (!selected && item.tags.includes("weapon")) {
     const hasPreparedWeapon = loaded.profile.warehouse.some((candidate) =>
-      candidate.tags.includes("weapon") && loaded.profile.preparedItemIds.includes(candidate.id),
+      candidate.tags.includes("weapon")
+      && weaponSlotFor(candidate) === weaponSlotFor(item)
+      && loaded.profile.preparedItemIds.includes(candidate.id),
     );
     if (hasPreparedWeapon) return { ok: false, error: "invalid_selection" };
   }
@@ -495,7 +499,9 @@ export function commitRunStart(storage: StorageAdapter, runId: string, startedAt
   const selectedIds = new Set(loaded.profile.preparedItemIds);
   const deployedItems = loaded.profile.warehouse.filter((item) => selectedIds.has(item.id)).map(cloneItem);
   if (deployedItems.length !== selectedIds.size) return { ok: false, error: "invalid_selection" };
-  if (deployedItems.filter((item) => item.tags.includes("weapon")).length > 1) {
+  const deployedWeapons = deployedItems.filter((item) => item.tags.includes("weapon"));
+  if (deployedWeapons.filter((item) => weaponSlotFor(item) === "melee").length > 1
+    || deployedWeapons.filter((item) => weaponSlotFor(item) === "ranged").length > 1) {
     return { ok: false, error: "invalid_selection" };
   }
   let rig = createEmptyContainer(ASSAULT_RIG, "deployment-check-rig");

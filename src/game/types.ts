@@ -25,6 +25,7 @@ export interface DungeonData {
   rooms: DungeonRoom[];
   startRoom: DungeonRoom;
   bossRoom: DungeonRoom;
+  dropPackExitRoom: DungeonRoom;
   connections: Array<[number, number]>;
 }
 
@@ -41,6 +42,8 @@ export interface RuntimeMapState {
   bossDiscovered: boolean;
   bossActive: boolean;
   chests: MapChestMarker[];
+  dropPackExitTileX: number;
+  dropPackExitTileY: number;
   exitTileX?: number;
   exitTileY?: number;
 }

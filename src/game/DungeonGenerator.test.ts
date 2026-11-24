@@ -32,6 +32,9 @@ describe("generateDungeon", () => {
     expect(first.rooms).toHaveLength(24);
     expect(first.startRoom).toMatchObject({ gridX: 0, gridY: 3, isStart: true });
     expect(first.bossRoom).toMatchObject({ gridX: 5, gridY: 0, isBoss: true });
+    expect(first.dropPackExitRoom).toMatchObject({ gridX: 5, gridY: 3, isStart: false, isBoss: false });
+    expect(first.dropPackExitRoom.id).not.toBe(first.startRoom.id);
+    expect(first.dropPackExitRoom.id).not.toBe(first.bossRoom.id);
   });
 
   it("uses varied irregular room silhouettes and solid interior obstacles", () => {
@@ -45,6 +48,7 @@ describe("generateDungeon", () => {
     expect(obstacleCount).toBeGreaterThanOrEqual(14);
     expect(dungeon.tiles[dungeon.startRoom.centerY * dungeon.width + dungeon.startRoom.centerX]).toBe(1);
     expect(dungeon.tiles[dungeon.bossRoom.centerY * dungeon.width + dungeon.bossRoom.centerX]).toBe(1);
+    expect(dungeon.tiles[dungeon.dropPackExitRoom.centerY * dungeon.width + dungeon.dropPackExitRoom.centerX]).toBe(1);
   });
 
   it("keeps every floor tile and room center connected", () => {

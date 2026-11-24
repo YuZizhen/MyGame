@@ -91,6 +91,7 @@ export interface ContainerState {
 
 export interface LoadoutState {
   weapon?: ItemInstance;
+  rangedWeapon?: ItemInstance;
   rig: ContainerState;
   backpack?: ContainerState;
 }
@@ -106,7 +107,8 @@ export type LoadoutError =
   | "container_missing"
   | "same_container"
   | "weapon_required"
-  | "weapon_slot_occupied";
+  | "weapon_slot_occupied"
+  | "weapon_kind_mismatch";
 
 export type LoadoutResult<T> =
   | { ok: true; value: T }
@@ -197,6 +199,10 @@ export function weaponDamagePerSecond(item: Pick<ItemInstance, "weaponStats">): 
 
 export function isRangedWeapon(item: Pick<ItemInstance, "weaponStats"> | undefined): boolean {
   return item?.weaponStats?.kind === "ranged";
+}
+
+export function weaponSlotFor(item: Pick<ItemInstance, "weaponStats">): "melee" | "ranged" {
+  return isRangedWeapon(item) ? "ranged" : "melee";
 }
 
 export function itemCurrentValue(item: Pick<ItemInstance, "value" | "quantity" | "maxQuantity">): number {
@@ -374,8 +380,11 @@ export function removeItem(
 }
 
 export function validateLoadout(loadout: LoadoutState): LoadoutResult<LoadoutState> {
+  if (loadout.weapon && weaponSlotFor(loadout.weapon) !== "melee") return { ok: false, error: "weapon_kind_mismatch" };
+  if (loadout.rangedWeapon && weaponSlotFor(loadout.rangedWeapon) !== "ranged") return { ok: false, error: "weapon_kind_mismatch" };
   const ids = [
     ...(loadout.weapon ? [loadout.weapon.id] : []),
+    ...(loadout.rangedWeapon ? [loadout.rangedWeapon.id] : []),
     ...listContainerItems(loadout.rig).map((item) => item.id),
     ...(loadout.backpack ? listContainerItems(loadout.backpack).map((item) => item.id) : []),
   ];
@@ -518,9 +527,12 @@ export function equipWeaponFromContainer(
   const removed = removeItem(sourceContainer, itemId);
   if (!removed.ok) return removed;
   if (!removed.value.item.tags.includes("weapon")) return { ok: false, error: "weapon_required" };
+  const slot = weaponSlotFor(removed.value.item);
+  const slotProperty = slot === "ranged" ? "rangedWeapon" : "weapon";
+  const equipped = loadout[slotProperty];
   let updatedSource = removed.value.container;
-  if (loadout.weapon) {
-    const storedWeapon = autoPlaceItem(updatedSource, loadout.weapon);
+  if (equipped) {
+    const storedWeapon = autoPlaceItem(updatedSource, equipped);
     if (!storedWeapon.ok) return storedWeapon;
     updatedSource = storedWeapon.value;
   }
@@ -528,25 +540,28 @@ export function equipWeaponFromContainer(
     ok: true,
     value: {
       ...loadout,
-      weapon: removed.value.item,
+      [slotProperty]: removed.value.item,
       [source]: updatedSource,
     },
   };
 }
 
-export function unequipWeaponToBackpack(loadout: LoadoutState): LoadoutResult<LoadoutState> {
+export function unequipWeaponToBackpack(loadout: LoadoutState, slot: "melee" | "ranged" = "melee"): LoadoutResult<LoadoutState> {
   const valid = validateLoadout(loadout);
   if (!valid.ok) return valid;
-  if (!loadout.weapon) return { ok: false, error: "item_not_found" };
+  const slotProperty = slot === "ranged" ? "rangedWeapon" : "weapon";
+  const equipped = loadout[slotProperty];
+  if (!equipped) return { ok: false, error: "item_not_found" };
   if (!loadout.backpack) return { ok: false, error: "container_missing" };
-  const placed = autoPlaceItem(loadout.backpack, loadout.weapon);
+  const placed = autoPlaceItem(loadout.backpack, equipped);
   if (!placed.ok) return placed;
-  return { ok: true, value: { ...loadout, weapon: undefined, backpack: placed.value } };
+  return { ok: true, value: { ...loadout, [slotProperty]: undefined, backpack: placed.value } };
 }
 
 export function equipWeapon(loadout: LoadoutState, item: ItemInstance): LoadoutResult<LoadoutState> {
   if (!item.tags.includes("weapon")) return { ok: false, error: "weapon_required" };
-  if (loadout.weapon) return { ok: false, error: "weapon_slot_occupied" };
+  const slotProperty = weaponSlotFor(item) === "ranged" ? "rangedWeapon" : "weapon";
+  if (loadout[slotProperty]) return { ok: false, error: "weapon_slot_occupied" };
   const storedItems = [
     ...listContainerItems(loadout.rig),
     ...(loadout.backpack ? listContainerItems(loadout.backpack) : []),
@@ -554,12 +569,13 @@ export function equipWeapon(loadout: LoadoutState, item: ItemInstance): LoadoutR
   if (storedItems.some((existing) => existing.id === item.id)) {
     return { ok: false, error: "duplicate_item" };
   }
-  return { ok: true, value: { ...loadout, weapon: item } };
+  return { ok: true, value: { ...loadout, [slotProperty]: item } };
 }
 
 export function loadoutCorruption(loadout: LoadoutState): number {
   const items = [
     ...(loadout.weapon ? [loadout.weapon] : []),
+    ...(loadout.rangedWeapon ? [loadout.rangedWeapon] : []),
     ...listContainerItems(loadout.rig),
     ...(loadout.backpack ? listContainerItems(loadout.backpack) : []),
   ];
@@ -595,6 +611,7 @@ function snapshotContainer(container: ContainerState): ContainerState {
 export function settleExtraction(loadout: LoadoutState, mode: ExtractionMode): ExtractionResult {
   const rigItemIds = listContainerItems(loadout.rig).map((item) => item.id);
   const weaponItemIds = loadout.weapon ? [loadout.weapon.id] : [];
+  const rangedWeaponItemIds = loadout.rangedWeapon ? [loadout.rangedWeapon.id] : [];
   const backpackItemIds = loadout.backpack
     ? listContainerItems(loadout.backpack).map((item) => item.id)
     : [];
@@ -603,13 +620,14 @@ export function settleExtraction(loadout: LoadoutState, mode: ExtractionMode): E
   if (mode === "normal") {
     const retained: LoadoutState = {
       weapon: loadout.weapon ? snapshotItem(loadout.weapon) : undefined,
+      rangedWeapon: loadout.rangedWeapon ? snapshotItem(loadout.rangedWeapon) : undefined,
       rig: snapshotContainer(loadout.rig),
       backpack: loadout.backpack ? snapshotContainer(loadout.backpack) : undefined,
     };
     return {
       mode,
       retained,
-      retainedItemIds: [...weaponItemIds, ...rigItemIds, ...backpackItemIds],
+      retainedItemIds: [...weaponItemIds, ...rangedWeaponItemIds, ...rigItemIds, ...backpackItemIds],
       droppedItemIds: [],
       corruptionBefore,
       corruptionAfter: corruptionBefore,
@@ -618,13 +636,14 @@ export function settleExtraction(loadout: LoadoutState, mode: ExtractionMode): E
 
   const retained: LoadoutState = {
     weapon: loadout.weapon ? snapshotItem(loadout.weapon) : undefined,
+    rangedWeapon: loadout.rangedWeapon ? snapshotItem(loadout.rangedWeapon) : undefined,
     rig: snapshotContainer(loadout.rig),
   };
   return {
     mode,
     retained,
     droppedBackpack: loadout.backpack ? snapshotContainer(loadout.backpack) : undefined,
-    retainedItemIds: [...weaponItemIds, ...rigItemIds],
+    retainedItemIds: [...weaponItemIds, ...rangedWeaponItemIds, ...rigItemIds],
     droppedItemIds: backpackItemIds,
     corruptionBefore,
     corruptionAfter: loadoutCorruption(retained),

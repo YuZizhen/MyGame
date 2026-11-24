@@ -287,6 +287,7 @@ export function generateDungeon(): DungeonData {
     rooms,
     startRoom: rooms[startId],
     bossRoom: rooms[roomId(GRID_COLUMNS - 1, 0)],
+    dropPackExitRoom: rooms[roomId(GRID_COLUMNS - 1, GRID_ROWS - 1)],
     connections,
   };
 }

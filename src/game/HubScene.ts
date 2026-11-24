@@ -404,7 +404,7 @@ export class HubScene extends Phaser.Scene {
   private handlePreparedToggle(item: ItemInstance): void {
     const result = commitPreparedToggle(window.localStorage, item.id);
     if (!result.ok) {
-      this.notice = result.error === "invalid_selection" ? "每次行动只能整备一把主武器。" : "整备失败，仓库或存档状态已经改变。";
+      this.notice = result.error === "invalid_selection" ? "近战槽与远程槽各只能整备一把同类型武器。" : "整备失败，仓库或存档状态已经改变。";
       this.reloadProfile();
       this.render();
       return;

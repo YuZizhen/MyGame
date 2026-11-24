@@ -158,11 +158,25 @@ try {
       const game = window.__ASHEN_GAME__;
       const scene = game.scene.getScene("GameScene");
       const profile = JSON.parse(localStorage.getItem("ashen-vault.profile"));
-      return scene.loadout.weapon?.definitionId === "service_pistol"
+      return scene.loadout.weapon?.definitionId === "starter_sword"
+        && scene.loadout.rangedWeapon?.definitionId === "service_pistol"
         && profile.warehouse.length === 0
         && profile.activeRun?.deployedItems?.length === 1;
     }),
     "Purchased and prepared weapon was not atomically deployed",
+  );
+  assert(
+    await page.evaluate(() => {
+      const hud = window.__ASHEN_GAME__.scene.getScene("HudScene");
+      return hud.quickSlotTexts.length === 4
+        && hud.quickSlotTexts.every((text) => text.y >= 650)
+        && hud.quickSlotTexts[0].text.includes("[1]")
+        && hud.quickSlotTexts[1].text.includes("[2]")
+        && hud.quickSlotTexts[2].text.includes("[3]")
+        && hud.quickSlotTexts[3].text.includes("[4]")
+        && hud.quickSlotTexts[3].text.includes("特殊药剂");
+    }),
+    "The fixed four-slot item bar is not rendered at the bottom of the combat view",
   );
   assert(
     await page.evaluate(() => !window.__ASHEN_GAME__.scene.getScene("HudScene").children.list
@@ -198,7 +212,7 @@ try {
   await page.evaluate(() => {
     const scene = window.__ASHEN_GAME__.scene.getScene("GameScene");
     scene.hp = 50;
-    scene.loadout.weapon.corruption = 12;
+    scene.loadout.rangedWeapon.corruption = 12;
     const medicinePocket = scene.loadout.rig.pockets.find((pocket) => pocket.definition.id === "medicine");
     medicinePocket.placements = [{
       x: 0, y: 0, rotated: false,
@@ -214,6 +228,14 @@ try {
     }),
     "Medicine quick slot consumed or healed instead of only selecting the item",
   );
+  await page.keyboard.press("Digit4");
+  assert(
+    await page.evaluate(() => {
+      const scene = window.__ASHEN_GAME__.scene.getScene("GameScene");
+      return scene.hp === 50 && scene.selectedMedicineId === "qa-bandage" && scene.medicalAction === undefined;
+    }),
+    "The unopened special-potion slot changed or consumed the selected medkit",
+  );
   await page.keyboard.press("q");
   assert(
     await page.evaluate(() => window.__ASHEN_GAME__.scene.getScene("GameScene").hp === 50),
@@ -227,7 +249,7 @@ try {
   await page.evaluate(() => {
     const scene = window.__ASHEN_GAME__.scene.getScene("GameScene");
     scene.hp = 1_000;
-    scene.loadout.weapon = {
+    scene.loadout.rangedWeapon = {
       id: "qa-pistol", definitionId: "service_pistol", name: "制式手枪", width: 1, height: 2, tags: ["weapon"], value: 95, corruption: 12,
       weaponStats: { kind: "ranged", damage: 20, attackIntervalMs: 320, critChance: 0, range: 720, magazineSize: 12, loadedAmmo: 0, reloadMs: 1200, ammoType: "light" },
     };
@@ -238,33 +260,35 @@ try {
     }];
     scene.emitHudState();
   });
+  await page.keyboard.press("Digit2");
+  await page.waitForFunction(() => window.__ASHEN_GAME__.scene.getScene("GameScene").selectedWeaponSlot === 2);
   await page.keyboard.press("r");
   assert(
     await page.evaluate(() => {
       const scene = window.__ASHEN_GAME__.scene.getScene("GameScene");
-      return scene.reloadAction !== undefined && scene.loadout.weapon.weaponStats.loadedAmmo === 0;
+      return scene.reloadAction !== undefined && scene.loadout.rangedWeapon.weaponStats.loadedAmmo === 0;
     }),
     "Reload did not start as a timed action",
   );
   await page.waitForFunction(() => {
     const scene = window.__ASHEN_GAME__.scene.getScene("GameScene");
     const reserve = scene.loadout.rig.pockets.flatMap((pocket) => pocket.placements).find((placement) => placement.item.id === "qa-ammo")?.item.quantity;
-    return scene.loadout.weapon.weaponStats.loadedAmmo === 12 && reserve === 48;
+    return scene.loadout.rangedWeapon.weaponStats.loadedAmmo === 12 && reserve === 48;
   });
   await page.keyboard.press("Space");
-  await page.waitForFunction(() => window.__ASHEN_GAME__.scene.getScene("GameScene").loadout.weapon.weaponStats.loadedAmmo === 11);
-  await page.keyboard.press("Digit2");
+  await page.waitForFunction(() => window.__ASHEN_GAME__.scene.getScene("GameScene").loadout.rangedWeapon.weaponStats.loadedAmmo === 11);
+  await page.keyboard.press("Digit1");
   assert(
     await page.evaluate(() => {
       const scene = window.__ASHEN_GAME__.scene.getScene("GameScene");
-      return scene.selectedWeaponSlot === 2 && scene.emergencyMeleeSelected === true && scene.loadout.weapon.weaponStats.loadedAmmo === 11;
+      return scene.selectedWeaponSlot === 1 && scene.loadout.weapon.weaponStats.kind === "melee" && scene.loadout.rangedWeapon.weaponStats.loadedAmmo === 11;
     }),
-    "Weapon quick slot did not select the emergency melee weapon without consuming ammo",
+    "Slot 1 did not select the fixed melee weapon while preserving ranged ammo",
   );
-  await page.keyboard.press("Digit1");
+  await page.keyboard.press("Space");
   await page.waitForFunction(() => {
     const scene = window.__ASHEN_GAME__.scene.getScene("GameScene");
-    return scene.selectedWeaponSlot === 1 && scene.emergencyMeleeSelected === false;
+    return scene.selectedWeaponSlot === 1 && scene.loadout.rangedWeapon.weaponStats.loadedAmmo === 11;
   });
   const touchAllowed = await page.evaluate(() => {
     const canvas = document.querySelector("canvas");
@@ -706,7 +730,7 @@ try {
       const backpackItems = scene.loadout.backpack.pockets.flatMap((pocket) => pocket.placements);
       const rigItems = scene.loadout.rig.pockets.flatMap((pocket) => pocket.placements);
       return !backpackItems.some((entry) => entry.item.id === itemId)
-        && (rigItems.some((entry) => entry.item.id === itemId) || scene.loadout.weapon?.id === itemId);
+        && (rigItems.some((entry) => entry.item.id === itemId) || scene.loadout.weapon?.id === itemId || scene.loadout.rangedWeapon?.id === itemId);
     },
     dragSetup.itemId,
   );
@@ -793,7 +817,17 @@ try {
 
   await page.goto(`${BASE_URL}/?qa=extract`);
   await page.waitForFunction(() => window.__ASHEN_GAME__?.scene?.getScene("GameScene")?.extractionPanelOpen === true);
-  await page.keyboard.press("2");
+  await page.keyboard.press("1");
+  await page.waitForFunction(() => window.__ASHEN_GAME__?.scene?.getScene("GameScene")?.runState === "won");
+  const fullExtractionResult = await page.evaluate(() => {
+    const scene = window.__ASHEN_GAME__.scene.getScene("GameScene");
+    const profile = JSON.parse(localStorage.getItem("ashen-vault.profile"));
+    return { backpackRetained: scene.loadout.backpack !== undefined, extractionMode: profile.lastExtraction.mode };
+  });
+  assert(fullExtractionResult.backpackRetained, "Boss portal did not retain the backpack");
+  assert(fullExtractionResult.extractionMode === "normal", "Boss portal persisted the wrong extraction mode");
+
+  await page.goto(`${BASE_URL}/?qa=extract-drop`);
   await page.waitForFunction(() => window.__ASHEN_GAME__?.scene?.getScene("GameScene")?.runState === "won");
   const dropPackResult = await page.evaluate(() => {
     const scene = window.__ASHEN_GAME__.scene.getScene("GameScene");
@@ -801,10 +835,12 @@ try {
     return {
       backpackDropped: scene.loadout.backpack === undefined,
       extractionMode: profile.lastExtraction.mode,
+      bossAlive: !scene.boss.dead,
     };
   });
-  assert(dropPackResult.backpackDropped, "Keyboard extraction choice 2 did not drop the backpack");
-  assert(dropPackResult.extractionMode === "drop_pack", "Keyboard extraction persisted the wrong mode");
+  assert(dropPackResult.backpackDropped, "Early extraction point did not drop the backpack");
+  assert(dropPackResult.extractionMode === "drop_pack", "Early extraction point persisted the wrong mode");
+  assert(dropPackResult.bossAlive, "Early drop-pack extraction incorrectly required defeating the Boss");
   await page.keyboard.press("r");
   await page.waitForFunction(() => window.__ASHEN_GAME__?.scene?.isActive("HubScene"));
   assert(
